@@ -57,6 +57,8 @@ class Radare2Bridge(private val context: Context) {
 
     fun isAvailable(): Boolean = locateRadare2Binary() != null
 
+    fun getVersion(): String = versionString()
+
     fun versionString(): String {
         val bin = locateRadare2Binary() ?: return "Unavailable"
         return try {

@@ -10,7 +10,6 @@ import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -59,39 +58,38 @@ import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.bimz.reforge.terminal.ConsoleEntry
-import org.bimz.reforge.ui.WorkstationUiState
-import org.bimz.reforge.ui.theme.AmberWarn
-import org.bimz.reforge.ui.theme.BorderSubtle
-import org.bimz.reforge.ui.theme.CyanAccent
-import org.bimz.reforge.ui.theme.EmeraldOk
-import org.bimz.reforge.ui.theme.ObsidianBg
-import org.bimz.reforge.ui.theme.ObsidianElevated
-import org.bimz.reforge.ui.theme.ObsidianSurface
-import org.bimz.reforge.ui.theme.RoseDanger
-import org.bimz.reforge.ui.theme.TextMuted
-import org.bimz.reforge.ui.theme.TextPrimary
-import org.bimz.reforge.ui.theme.TextSecondary
+import org.bimz.reforge.ui.navigation.LocalBottomClearance
+import org.bimz.reforge.ui.state.TerminalSessionState
+import org.bimz.reforge.ui.state.WorkstationUiState
+import org.bimz.reforge.ui.state.WorkstationViewModel
+import org.bimz.reforge.ui.theme.ForgeAmber
+import org.bimz.reforge.ui.theme.ForgeBg
+import org.bimz.reforge.ui.theme.ForgeBorder
+import org.bimz.reforge.ui.theme.ForgeCyan
+import org.bimz.reforge.ui.theme.ForgeElevated
+import org.bimz.reforge.ui.theme.ForgeEmerald
+import org.bimz.reforge.ui.theme.ForgeRose
+import org.bimz.reforge.ui.theme.ForgeSurface
+import org.bimz.reforge.ui.theme.ForgeTextMuted
+import org.bimz.reforge.ui.theme.ForgeTextPrimary
+import org.bimz.reforge.ui.theme.ForgeTextSecondary
 
 @Composable
 fun ToolsScreen(
     state: WorkstationUiState,
-    onRunCommand: (String) -> Unit,
-    onExitR2Mode: () -> Unit,
-    onStopCommand: () -> Unit,
-    onAddSession: () -> Unit,
-    onSelectSession: (String) -> Unit,
-    onCloseSession: (String) -> Unit,
-    onSaveDumpToForge: (String) -> Unit,
-    onOpenSavedFolder: () -> Unit
+    viewModel: WorkstationViewModel
 ) {
     var input by remember { mutableStateOf("") }
-    val activeSession = state.activeSession
+    val bottomClearance = LocalBottomClearance.current
+    val activeSession = state.terminalSessions.firstOrNull { it.id == state.activeSessionId }
+        ?: state.terminalSessions.firstOrNull()
+        ?: TerminalSessionState("session-1", "Session 1", state.consoleHistory)
     val isR2Mode = activeSession.r2Mode
     val listState = rememberLazyListState()
     val context = LocalContext.current
 
     val promptPrefix = if (isR2Mode) "r2 [${activeSession.currentSeekHex}]>" else "reforge@arm64:~$"
-    val promptColor = if (isR2Mode) AmberWarn else CyanAccent
+    val promptColor = if (isR2Mode) ForgeAmber else ForgeCyan
 
     val quickChips = if (isR2Mode) {
         listOf("aaa", "AA", "afl", "ij", "iSj", "isj", "izz", "pdf @ main")
@@ -109,9 +107,10 @@ fun ToolsScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(ObsidianBg)
+            .background(ForgeBg)
             .imePadding()
             .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(bottom = bottomClearance)
     ) {
         Surface(
             modifier = Modifier
@@ -121,11 +120,11 @@ fun ToolsScreen(
             color = Color(0xFF070A0F),
             border = BorderStroke(
                 1.dp,
-                if (isR2Mode) AmberWarn.copy(alpha = 0.5f) else BorderSubtle
+                if (isR2Mode) ForgeAmber.copy(alpha = 0.5f) else ForgeBorder
             )
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Row 1: Multi-Session Tab Bar
+                // Multi-Session Tab Bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -143,15 +142,15 @@ fun ToolsScreen(
                         state.terminalSessions.forEach { session ->
                             val selected = session.id == activeSession.id
                             val tabBorder = when {
-                                selected && session.r2Mode -> AmberWarn.copy(alpha = 0.7f)
-                                selected -> CyanAccent.copy(alpha = 0.7f)
-                                else -> BorderSubtle
+                                selected && session.r2Mode -> ForgeAmber.copy(alpha = 0.7f)
+                                selected -> ForgeCyan.copy(alpha = 0.7f)
+                                else -> ForgeBorder
                             }
                             Surface(
                                 shape = RoundedCornerShape(8.dp),
-                                color = if (selected) ObsidianElevated else ObsidianSurface,
+                                color = if (selected) ForgeElevated else ForgeSurface,
                                 border = BorderStroke(1.dp, tabBorder),
-                                modifier = Modifier.clickable { onSelectSession(session.id) }
+                                modifier = Modifier.clickable { viewModel.selectTerminalSession(session.id) }
                             ) {
                                 Row(
                                     modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
@@ -159,7 +158,7 @@ fun ToolsScreen(
                                 ) {
                                     Text(
                                         text = if (session.r2Mode) "${session.title} • r2" else session.title,
-                                        color = if (selected) (if (session.r2Mode) AmberWarn else CyanAccent) else TextSecondary,
+                                        color = if (selected) (if (session.r2Mode) ForgeAmber else ForgeCyan) else ForgeTextSecondary,
                                         fontFamily = FontFamily.Monospace,
                                         fontSize = 11.sp,
                                         fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
@@ -169,10 +168,10 @@ fun ToolsScreen(
                                         Icon(
                                             imageVector = Icons.Outlined.Close,
                                             contentDescription = "Close session",
-                                            tint = TextMuted,
+                                            tint = ForgeTextMuted,
                                             modifier = Modifier
                                                 .size(13.dp)
-                                                .clickable { onCloseSession(session.id) }
+                                                .clickable { viewModel.closeTerminalSession(session.id) }
                                         )
                                     }
                                 }
@@ -183,26 +182,26 @@ fun ToolsScreen(
                     Spacer(modifier = Modifier.width(6.dp))
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = CyanAccent.copy(alpha = 0.14f),
-                        border = BorderStroke(1.dp, CyanAccent.copy(alpha = 0.45f)),
-                        modifier = Modifier.clickable { onAddSession() }
+                        color = ForgeCyan.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, ForgeCyan.copy(alpha = 0.45f)),
+                        modifier = Modifier.clickable { viewModel.addTerminalSession() }
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Icon(Icons.Outlined.Add, contentDescription = "New Session", tint = CyanAccent, modifier = Modifier.size(14.dp))
+                            Icon(Icons.Outlined.Add, contentDescription = "New Session", tint = ForgeCyan, modifier = Modifier.size(14.dp))
                             Spacer(modifier = Modifier.width(2.dp))
-                            Text("Session", color = CyanAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                            Text("Session", color = ForgeCyan, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                         }
                     }
                 }
 
-                // Row 2: Active Session Status & Actions
+                // Active Session Status Bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(ObsidianSurface)
+                        .background(ForgeSurface)
                         .padding(horizontal = 12.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -217,28 +216,28 @@ fun ToolsScreen(
                     if (activeSession.isRunning) {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = RoseDanger.copy(alpha = 0.16f),
-                            border = BorderStroke(1.dp, RoseDanger.copy(alpha = 0.55f)),
-                            modifier = Modifier.clickable { onStopCommand() }
+                            color = ForgeRose.copy(alpha = 0.16f),
+                            border = BorderStroke(1.dp, ForgeRose.copy(alpha = 0.55f)),
+                            modifier = Modifier.clickable { viewModel.stopActiveSessionCommand() }
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Outlined.StopCircle, contentDescription = "Stop", tint = RoseDanger, modifier = Modifier.size(13.dp))
+                                Icon(Icons.Outlined.StopCircle, contentDescription = "Stop", tint = ForgeRose, modifier = Modifier.size(13.dp))
                                 Spacer(modifier = Modifier.width(4.dp))
-                                Text("STOP", color = RoseDanger, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                                Text("STOP", color = ForgeRose, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                             }
                         }
                     } else if (isR2Mode) {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = AmberWarn.copy(alpha = 0.14f),
-                            border = BorderStroke(1.dp, AmberWarn.copy(alpha = 0.45f))
+                            color = ForgeAmber.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, ForgeAmber.copy(alpha = 0.45f))
                         ) {
                             Text(
                                 text = "PERSISTENT r2",
-                                color = AmberWarn,
+                                color = ForgeAmber,
                                 fontSize = 10.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
@@ -250,13 +249,13 @@ fun ToolsScreen(
                     if (isR2Mode) {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
-                            color = RoseDanger.copy(alpha = 0.14f),
-                            border = BorderStroke(1.dp, RoseDanger.copy(alpha = 0.45f)),
-                            modifier = Modifier.clickable { onExitR2Mode() }
+                            color = ForgeRose.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, ForgeRose.copy(alpha = 0.45f)),
+                            modifier = Modifier.clickable { viewModel.exitActiveR2Session() }
                         ) {
                             Text(
                                 text = "Exit r2",
-                                color = RoseDanger,
+                                color = ForgeRose,
                                 fontSize = 10.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
@@ -266,24 +265,24 @@ fun ToolsScreen(
                         Spacer(modifier = Modifier.width(6.dp))
                     }
                     IconButton(
-                        onClick = { onSaveDumpToForge("") },
+                        onClick = { viewModel.saveDumpToForgeVault("") },
                         modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.SaveAlt,
                             contentDescription = "Save dump to RE FORGE",
-                            tint = CyanAccent,
+                            tint = ForgeCyan,
                             modifier = Modifier.size(16.dp)
                         )
                     }
                     IconButton(
-                        onClick = { onRunCommand("clear") },
+                        onClick = { viewModel.executeSessionCommand("clear") },
                         modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.DeleteSweep,
                             contentDescription = "Clear buffer",
-                            tint = TextSecondary,
+                            tint = ForgeTextSecondary,
                             modifier = Modifier.size(16.dp)
                         )
                     }
@@ -307,9 +306,8 @@ fun ToolsScreen(
                                 },
                                 onSaveDump = {
                                     val payload = "# Command: ${entry.command}\n# Target: ${state.activeFile?.name ?: "none"}\n\n${entry.output}"
-                                    onSaveDumpToForge(payload)
-                                },
-                                onOpenSavedFolder = onOpenSavedFolder
+                                    viewModel.saveDumpToForgeVault(payload)
+                                }
                             )
                         }
                     }
@@ -319,7 +317,7 @@ fun ToolsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(ObsidianSurface.copy(alpha = 0.8f))
+                        .background(ForgeSurface.copy(alpha = 0.8f))
                         .horizontalScroll(rememberScrollState())
                         .padding(horizontal = 10.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -327,20 +325,20 @@ fun ToolsScreen(
                     quickChips.forEach { chip ->
                         Surface(
                             shape = RoundedCornerShape(7.dp),
-                            color = ObsidianElevated,
+                            color = ForgeElevated,
                             border = BorderStroke(
                                 1.dp,
-                                if (isR2Mode) AmberWarn.copy(alpha = 0.35f) else BorderSubtle
+                                if (isR2Mode) ForgeAmber.copy(alpha = 0.35f) else ForgeBorder
                             ),
                             modifier = Modifier.clickable {
                                 if (!activeSession.isRunning) {
-                                    onRunCommand(chip)
+                                    viewModel.executeSessionCommand(chip)
                                 }
                             }
                         ) {
                             Text(
                                 text = chip,
-                                color = if (isR2Mode) AmberWarn else CyanAccent,
+                                color = if (isR2Mode) ForgeAmber else ForgeCyan,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.sp,
                                 modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
@@ -353,7 +351,7 @@ fun ToolsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(ObsidianElevated)
+                        .background(ForgeElevated)
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -369,7 +367,7 @@ fun ToolsScreen(
                         if (input.isEmpty()) {
                             Text(
                                 text = if (isR2Mode) "aaa | AA | afl | pdf @ main | exit" else "r2 | elf | hash | save",
-                                color = TextMuted,
+                                color = ForgeTextMuted,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 12.sp
                             )
@@ -379,7 +377,7 @@ fun ToolsScreen(
                             onValueChange = { input = it },
                             singleLine = true,
                             textStyle = TextStyle(
-                                color = TextPrimary,
+                                color = ForgeTextPrimary,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 12.sp
                             ),
@@ -389,7 +387,7 @@ fun ToolsScreen(
                                 if (input.isNotBlank() && !activeSession.isRunning) {
                                     val cmd = input
                                     input = ""
-                                    onRunCommand(cmd)
+                                    viewModel.executeSessionCommand(cmd)
                                 }
                             }),
                             modifier = Modifier.fillMaxWidth()
@@ -397,13 +395,13 @@ fun ToolsScreen(
                     }
                     if (activeSession.isRunning) {
                         IconButton(
-                            onClick = onStopCommand,
+                            onClick = { viewModel.stopActiveSessionCommand() },
                             modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
                                 imageVector = Icons.Outlined.StopCircle,
                                 contentDescription = "Stop command",
-                                tint = RoseDanger
+                                tint = ForgeRose
                             )
                         }
                     } else {
@@ -412,7 +410,7 @@ fun ToolsScreen(
                                 if (input.isNotBlank()) {
                                     val cmd = input
                                     input = ""
-                                    onRunCommand(cmd)
+                                    viewModel.executeSessionCommand(cmd)
                                 }
                             },
                             modifier = Modifier.size(30.dp)
@@ -427,7 +425,6 @@ fun ToolsScreen(
                 }
             }
         }
-        Spacer(modifier = Modifier.height(74.dp))
     }
 }
 
@@ -435,14 +432,13 @@ fun ToolsScreen(
 private fun ConsoleEntryBlock(
     entry: ConsoleEntry,
     onCopy: () -> Unit,
-    onSaveDump: () -> Unit,
-    onOpenSavedFolder: () -> Unit
+    onSaveDump: () -> Unit
 ) {
     Column(modifier = Modifier.fillMaxWidth()) {
         if (entry.command != "session" && entry.command != "target") {
             Text(
                 text = if (entry.isR2Command) "r2> ${entry.command}" else "$ ${entry.command}",
-                color = if (entry.isR2Command) AmberWarn else CyanAccent,
+                color = if (entry.isR2Command) ForgeAmber else ForgeCyan,
                 fontFamily = FontFamily.Monospace,
                 fontSize = 12.sp,
                 fontWeight = FontWeight.SemiBold
@@ -452,10 +448,10 @@ private fun ConsoleEntryBlock(
         Text(
             text = entry.output,
             color = when {
-                entry.isError -> RoseDanger
-                entry.isRunning -> AmberWarn
-                entry.command == "session" || entry.command == "target" -> EmeraldOk
-                else -> TextPrimary
+                entry.isError -> ForgeRose
+                entry.isRunning -> ForgeAmber
+                entry.command == "session" || entry.command == "target" -> ForgeEmerald
+                else -> ForgeTextPrimary
             },
             fontFamily = FontFamily.Monospace,
             fontSize = 11.5.sp,
@@ -466,47 +462,33 @@ private fun ConsoleEntryBlock(
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = ObsidianSurface,
-                    border = BorderStroke(1.dp, BorderSubtle),
+                    color = ForgeSurface,
+                    border = BorderStroke(1.dp, ForgeBorder),
                     modifier = Modifier.clickable { onCopy() }
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(12.dp))
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = ForgeTextSecondary, modifier = Modifier.size(12.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Copy", color = TextSecondary, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                        Text("Copy", color = ForgeTextSecondary, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                     }
                 }
                 Surface(
                     shape = RoundedCornerShape(6.dp),
-                    color = CyanAccent.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, CyanAccent.copy(alpha = 0.45f)),
+                    color = ForgeCyan.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, ForgeCyan.copy(alpha = 0.45f)),
                     modifier = Modifier.clickable { onSaveDump() }
                 ) {
                     Row(
                         modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Outlined.SaveAlt, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(12.dp))
+                        Icon(Icons.Outlined.SaveAlt, contentDescription = null, tint = ForgeCyan, modifier = Modifier.size(12.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Save to RE FORGE", color = CyanAccent, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                        Text("Save to RE FORGE", color = ForgeCyan, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
                     }
-                }
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = ObsidianSurface,
-                    border = BorderStroke(1.dp, BorderSubtle),
-                    modifier = Modifier.clickable { onOpenSavedFolder() }
-                ) {
-                    Text(
-                        text = "Open Vault",
-                        color = EmeraldOk,
-                        fontSize = 10.sp,
-                        fontFamily = FontFamily.Monospace,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
                 }
             }
         }

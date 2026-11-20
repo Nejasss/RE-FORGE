@@ -4,6 +4,8 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
@@ -42,13 +44,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -56,18 +58,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.bimz.reforge.storage.SavedForgeFile
-import org.bimz.reforge.ui.WorkstationUiState
-import org.bimz.reforge.ui.theme.BorderSubtle
-import org.bimz.reforge.ui.theme.CyanAccent
-import org.bimz.reforge.ui.theme.EmeraldOk
-import org.bimz.reforge.ui.theme.ObsidianBg
-import org.bimz.reforge.ui.theme.ObsidianElevated
-import org.bimz.reforge.ui.theme.ObsidianSurface
-import org.bimz.reforge.ui.theme.RoseDanger
-import org.bimz.reforge.ui.theme.TextMuted
-import org.bimz.reforge.ui.theme.TextPrimary
-import org.bimz.reforge.ui.theme.TextSecondary
-import java.io.File
+import org.bimz.reforge.ui.navigation.LocalBottomClearance
+import org.bimz.reforge.ui.state.WorkstationUiState
+import org.bimz.reforge.ui.state.WorkstationViewModel
+import org.bimz.reforge.ui.theme.ForgeBg
+import org.bimz.reforge.ui.theme.ForgeBorder
+import org.bimz.reforge.ui.theme.ForgeCyan
+import org.bimz.reforge.ui.theme.ForgeEmerald
+import org.bimz.reforge.ui.theme.ForgeRose
+import org.bimz.reforge.ui.theme.ForgeSurface
+import org.bimz.reforge.ui.theme.ForgeTextMuted
+import org.bimz.reforge.ui.theme.ForgeTextPrimary
+import org.bimz.reforge.ui.theme.ForgeTextSecondary
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -75,26 +77,38 @@ import java.util.Locale
 @Composable
 fun SavedFilesScreen(
     state: WorkstationUiState,
-    onImportToForge: () -> Unit,
-    onOpenInTerminal: (File) -> Unit,
-    onOpenInHex: (File) -> Unit,
-    onDeleteSaved: (SavedForgeFile) -> Unit
+    viewModel: WorkstationViewModel,
+    onNavigateToTerminal: () -> Unit = {},
+    onNavigateToHex: () -> Unit = {}
 ) {
     val context = LocalContext.current
+    val bottomClearance = LocalBottomClearance.current
     var previewFile by remember { mutableStateOf<SavedForgeFile?>(null) }
     var previewContent by remember { mutableStateOf("") }
+
+    val importLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            viewModel.importFileDirectToForge(uri)
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        viewModel.refreshSavedForgeFiles()
+    }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(ObsidianBg)
+            .background(ForgeBg)
             .padding(horizontal = 16.dp, vertical = 12.dp)
     ) {
         Surface(
             modifier = Modifier.fillMaxWidth(),
             shape = RoundedCornerShape(14.dp),
-            color = ObsidianSurface,
-            border = BorderStroke(1.dp, BorderSubtle)
+            color = ForgeSurface,
+            border = BorderStroke(1.dp, ForgeBorder)
         ) {
             Row(
                 modifier = Modifier.padding(14.dp),
@@ -103,28 +117,28 @@ fun SavedFilesScreen(
                 Icon(
                     imageVector = Icons.Outlined.FolderSpecial,
                     contentDescription = null,
-                    tint = CyanAccent,
+                    tint = ForgeCyan,
                     modifier = Modifier.size(26.dp)
                 )
                 Spacer(modifier = Modifier.width(12.dp))
                 Column(modifier = Modifier.weight(1f)) {
                     Text(
                         text = "RE FORGE Vault",
-                        color = TextPrimary,
+                        color = ForgeTextPrimary,
                         fontWeight = FontWeight.Bold,
                         fontSize = 15.sp
                     )
                     Text(
                         text = "Download/RE FORGE • ${state.savedForgeFiles.size} file(s)",
-                        color = TextSecondary,
+                        color = ForgeTextSecondary,
                         fontSize = 11.sp
                     )
                 }
                 Button(
-                    onClick = onImportToForge,
+                    onClick = { importLauncher.launch(arrayOf("*/*")) },
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = CyanAccent,
-                        contentColor = ObsidianBg
+                        containerColor = ForgeCyan,
+                        contentColor = ForgeBg
                     ),
                     shape = RoundedCornerShape(10.dp),
                     contentPadding = PaddingValues(horizontal = 12.dp, vertical = 8.dp)
@@ -142,8 +156,8 @@ fun SavedFilesScreen(
             Surface(
                 modifier = Modifier.fillMaxWidth(),
                 shape = RoundedCornerShape(14.dp),
-                color = ObsidianSurface,
-                border = BorderStroke(1.dp, BorderSubtle)
+                color = ForgeSurface,
+                border = BorderStroke(1.dp, ForgeBorder)
             ) {
                 Column(
                     modifier = Modifier.padding(24.dp),
@@ -151,14 +165,14 @@ fun SavedFilesScreen(
                 ) {
                     Text(
                         text = "Folder RE FORGE masih kosong",
-                        color = TextPrimary,
+                        color = ForgeTextPrimary,
                         fontWeight = FontWeight.SemiBold,
                         fontSize = 14.sp
                     )
                     Spacer(modifier = Modifier.height(6.dp))
                     Text(
-                        text = "Setiap kali menekan 'Save Dump' di Terminal atau 'Save' di Hex Editor, file otomatis tersimpan ke folder RE FORGE dan bisa langsung dibuka di sini.",
-                        color = TextSecondary,
+                        text = "Hasil 'Save to RE FORGE' dari terminal Radare2 maupun binary yang di-import akan tersimpan otomatis di sini dan bisa langsung dibuka.",
+                        color = ForgeTextSecondary,
                         fontSize = 12.sp
                     )
                 }
@@ -166,7 +180,7 @@ fun SavedFilesScreen(
         } else {
             LazyColumn(
                 verticalArrangement = Arrangement.spacedBy(10.dp),
-                contentPadding = PaddingValues(bottom = 96.dp)
+                contentPadding = PaddingValues(bottom = bottomClearance + 20.dp)
             ) {
                 items(state.savedForgeFiles, key = { it.file.absolutePath }) { item ->
                     SavedForgeFileCard(
@@ -176,9 +190,15 @@ fun SavedFilesScreen(
                                 .getOrElse { "Unable to read text: ${it.message}" }
                             previewFile = item
                         },
-                        onOpenTerminal = { onOpenInTerminal(item.file) },
-                        onOpenHex = { onOpenInHex(item.file) },
-                        onDelete = { onDeleteSaved(item) }
+                        onOpenTerminal = {
+                            viewModel.openSavedForgeFileInWorkstation(item.file)
+                            onNavigateToTerminal()
+                        },
+                        onOpenHex = {
+                            viewModel.openSavedForgeFileInWorkstation(item.file)
+                            onNavigateToHex()
+                        },
+                        onDelete = { viewModel.deleteSavedForgeFile(item) }
                     )
                 }
             }
@@ -189,11 +209,11 @@ fun SavedFilesScreen(
     if (activePreview != null) {
         AlertDialog(
             onDismissRequest = { previewFile = null },
-            containerColor = ObsidianSurface,
+            containerColor = ForgeSurface,
             title = {
                 Text(
                     text = activePreview.name,
-                    color = TextPrimary,
+                    color = ForgeTextPrimary,
                     fontSize = 14.sp,
                     fontWeight = FontWeight.Bold,
                     maxLines = 1,
@@ -205,13 +225,13 @@ fun SavedFilesScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .height(340.dp)
-                        .background(ObsidianBg, RoundedCornerShape(10.dp))
+                        .background(ForgeBg, RoundedCornerShape(10.dp))
                         .padding(10.dp)
                         .verticalScroll(rememberScrollState())
                 ) {
                     Text(
                         text = previewContent,
-                        color = TextPrimary,
+                        color = ForgeTextPrimary,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
                         lineHeight = 15.sp
@@ -224,9 +244,9 @@ fun SavedFilesScreen(
                         val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         cb.setPrimaryClip(ClipData.newPlainText(activePreview.name, previewContent))
                     }) {
-                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = ForgeCyan, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Copy", color = CyanAccent, fontSize = 12.sp)
+                        Text("Copy", color = ForgeCyan, fontSize = 12.sp)
                     }
                     TextButton(onClick = {
                         val sendIntent = Intent(Intent.ACTION_SEND).apply {
@@ -236,12 +256,12 @@ fun SavedFilesScreen(
                         }
                         context.startActivity(Intent.createChooser(sendIntent, activePreview.name))
                     }) {
-                        Icon(Icons.Outlined.Share, contentDescription = null, tint = EmeraldOk, modifier = Modifier.size(16.dp))
+                        Icon(Icons.Outlined.Share, contentDescription = null, tint = ForgeEmerald, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(4.dp))
-                        Text("Share", color = EmeraldOk, fontSize = 12.sp)
+                        Text("Share", color = ForgeEmerald, fontSize = 12.sp)
                     }
                     TextButton(onClick = { previewFile = null }) {
-                        Text("Close", color = TextSecondary, fontSize = 12.sp)
+                        Text("Close", color = ForgeTextSecondary, fontSize = 12.sp)
                     }
                 }
             }
@@ -258,14 +278,14 @@ private fun SavedForgeFileCard(
     onDelete: () -> Unit
 ) {
     val dateFmt = remember { SimpleDateFormat("dd MMM yyyy • HH:mm", Locale.US) }
-    val badgeColor = if (item.isTextDump) EmeraldOk else CyanAccent
+    val badgeColor = if (item.isTextDump) ForgeEmerald else ForgeCyan
     val badgeText = if (item.isTextDump) "DUMP" else "BINARY"
 
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(14.dp),
-        color = ObsidianSurface,
-        border = BorderStroke(1.dp, BorderSubtle)
+        color = ForgeSurface,
+        border = BorderStroke(1.dp, ForgeBorder)
     ) {
         Column(modifier = Modifier.padding(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -286,7 +306,7 @@ private fun SavedForgeFileCard(
                 Spacer(modifier = Modifier.width(8.dp))
                 Text(
                     text = item.name,
-                    color = TextPrimary,
+                    color = ForgeTextPrimary,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 13.sp,
                     maxLines = 1,
@@ -297,7 +317,7 @@ private fun SavedForgeFileCard(
                     Icon(
                         imageVector = Icons.Outlined.DeleteOutline,
                         contentDescription = "Delete",
-                        tint = RoseDanger,
+                        tint = ForgeRose,
                         modifier = Modifier.size(18.dp)
                     )
                 }
@@ -306,7 +326,7 @@ private fun SavedForgeFileCard(
             Spacer(modifier = Modifier.height(4.dp))
             Text(
                 text = "${formatFileBytes(item.sizeBytes)} • ${dateFmt.format(Date(item.lastModifiedMs))}",
-                color = TextMuted,
+                color = ForgeTextMuted,
                 fontSize = 11.sp
             )
 
@@ -320,8 +340,8 @@ private fun SavedForgeFileCard(
                         onClick = onReadDump,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = EmeraldOk,
-                            contentColor = ObsidianBg
+                            containerColor = ForgeEmerald,
+                            contentColor = ForgeBg
                         ),
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
@@ -332,8 +352,8 @@ private fun SavedForgeFileCard(
                     }
                     OutlinedButton(
                         onClick = onOpenHex,
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
-                        border = BorderStroke(1.dp, BorderSubtle),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = ForgeTextPrimary),
+                        border = BorderStroke(1.dp, ForgeBorder),
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
                     ) {
@@ -346,8 +366,8 @@ private fun SavedForgeFileCard(
                         onClick = onOpenTerminal,
                         modifier = Modifier.weight(1f),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = CyanAccent,
-                            contentColor = ObsidianBg
+                            containerColor = ForgeCyan,
+                            contentColor = ForgeBg
                         ),
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
@@ -359,8 +379,8 @@ private fun SavedForgeFileCard(
                     OutlinedButton(
                         onClick = onOpenHex,
                         modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.outlinedButtonColors(contentColor = TextPrimary),
-                        border = BorderStroke(1.dp, BorderSubtle),
+                        colors = ButtonDefaults.outlinedButtonColors(contentColor = ForgeTextPrimary),
+                        border = BorderStroke(1.dp, ForgeBorder),
                         shape = RoundedCornerShape(8.dp),
                         contentPadding = PaddingValues(horizontal = 10.dp, vertical = 7.dp)
                     ) {

@@ -1,6 +1,14 @@
 package org.bimz.reforge.ui.state
 
 import android.net.Uri
+import org.bimz.reforge.storage.SavedFileManager
+import org.bimz.reforge.storage.SavedForgeFile
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.UUID
+
+import android.net.Uri
 import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
@@ -38,7 +46,19 @@ enum class WorkstationDestination(val label: String) {
     SETTINGS("Settings")
 }
 
+data class TerminalSessionState(
+    val id: String,
+    val title: String,
+    val history: List<ConsoleEntry>,
+    val r2Mode: Boolean = false,
+    val currentSeekHex: String = "0x00000000",
+    val isRunning: Boolean = false
+)
+
 data class WorkstationUiState(
+    val savedForgeFiles: List<SavedForgeFile> = emptyList(),
+    val terminalSessions: List<TerminalSessionState> = listOf(TerminalSessionState("session-1", "Session 1", emptyList())),
+    val activeSessionId: String = "session-1",
     val currentRoute: WorkstationDestination = WorkstationDestination.HOME,
     val darkTheme: Boolean = true,
     val appVersion: String = BuildConfig.VERSION_NAME,
@@ -612,5 +632,164 @@ class WorkstationViewModelFactory(private val app: ReForgeApplication) : ViewMod
     @Suppress("UNCHECKED_CAST")
     override fun <T : ViewModel> create(modelClass: Class<T>): T {
         return WorkstationViewModel(app) as T
+    }
+
+    private val savedFileManager by lazy { SavedFileManager(getApplication()) }
+    private var sessionCounter = 1
+
+    fun activeTerminalSession(): TerminalSessionState {
+        val st = _uiState.value
+        return st.terminalSessions.firstOrNull { it.id == st.activeSessionId }
+            ?: st.terminalSessions.firstOrNull()
+            ?: TerminalSessionState("session-1", "Session 1", st.consoleHistory)
+    }
+
+    fun addTerminalSession() {
+        sessionCounter += 1
+        val sid = "session-${UUID.randomUUID().toString().take(8)}"
+        val targetLabel = _uiState.value.activeFile?.name ?: "none"
+        val newSess = TerminalSessionState(
+            id = sid,
+            title = "Session $sessionCounter",
+            history = listOf(
+                ConsoleEntry(
+                    command = "session",
+                    output = "Session $sessionCounter ready (Radare2 ARM64 • Unlimited Analysis Time).\nTarget: $targetLabel",
+                    isError = false
+                )
+            )
+        )
+        _uiState.value = _uiState.value.copy(
+            terminalSessions = _uiState.value.terminalSessions + newSess,
+            activeSessionId = sid
+        )
+    }
+
+    fun selectTerminalSession(sessionId: String) {
+        if (_uiState.value.terminalSessions.any { it.id == sessionId }) {
+            _uiState.value = _uiState.value.copy(activeSessionId = sessionId)
+        }
+    }
+
+    fun closeTerminalSession(sessionId: String) {
+        val cur = _uiState.value.terminalSessions
+        if (cur.size <= 1) return
+        consoleRunner.closeSession(sessionId)
+        val rem = cur.filterNot { it.id == sessionId }
+        val nextId = if (_uiState.value.activeSessionId == sessionId) rem.last().id else _uiState.value.activeSessionId
+        _uiState.value = _uiState.value.copy(terminalSessions = rem, activeSessionId = nextId)
+    }
+
+    fun stopActiveSessionCommand() {
+        val sess = activeTerminalSession()
+        consoleRunner.stopSession(sess.id)
+        updateTerminalSession(sess.id) { it.copy(isRunning = false) }
+    }
+
+    private fun updateTerminalSession(sessionId: String, fn: (TerminalSessionState) -> TerminalSessionState) {
+        val updated = _uiState.value.terminalSessions.map { if (it.id == sessionId) fn(it) else it }
+        _uiState.value = _uiState.value.copy(terminalSessions = updated)
+    }
+
+    fun executeSessionCommand(rawInput: String) {
+        val sess = activeTerminalSession()
+        val sid = sess.id
+        if (rawInput.trim().equals("clear", ignoreCase = true)) {
+            updateTerminalSession(sid) { it.copy(history = emptyList()) }
+            return
+        }
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            updateTerminalSession(sid) { it.copy(isRunning = true) }
+            val outcome = consoleRunner.executeInteractive(
+                rawInput = rawInput,
+                activeFile = _uiState.value.activeFile,
+                sessionId = sid,
+                currentR2Mode = sess.r2Mode,
+                currentSeekHex = sess.currentSeekHex
+            ) { progressEntry ->
+                val curHist = _uiState.value.terminalSessions.firstOrNull { it.id == sid }?.history.orEmpty()
+                val idx = curHist.indexOfFirst { it.id == progressEntry.id }
+                val nextHist = if (idx >= 0) curHist.toMutableList().apply { set(idx, progressEntry) } else curHist + progressEntry
+                updateTerminalSession(sid) { it.copy(history = nextHist, isRunning = true) }
+            }
+            val curHist = _uiState.value.terminalSessions.firstOrNull { it.id == sid }?.history.orEmpty()
+            val idx = curHist.indexOfFirst { it.id == outcome.entry.id }
+            val nextHist = if (idx >= 0) curHist.toMutableList().apply { set(idx, outcome.entry) } else curHist + outcome.entry
+            updateTerminalSession(sid) {
+                it.copy(
+                    history = nextHist,
+                    r2Mode = outcome.nextR2Mode,
+                    currentSeekHex = outcome.nextSeekHex,
+                    isRunning = false
+                )
+            }
+            if (outcome.requestSaveDump) {
+                val dumpText = buildLatestSessionDump()
+                if (dumpText.isNotBlank()) {
+                    saveDumpToForgeVault(dumpText)
+                }
+            }
+        }
+    }
+
+    fun exitActiveR2Session() {
+        val sess = activeTerminalSession()
+        if (!sess.r2Mode) return
+        consoleRunner.closeSession(sess.id)
+        updateTerminalSession(sess.id) {
+            it.copy(
+                r2Mode = false,
+                currentSeekHex = "0x00000000",
+                isRunning = false,
+                history = it.history + ConsoleEntry(
+                    command = "exit",
+                    output = "[r2] Closed Radare2 interactive session. Returned to shell.",
+                    isError = false,
+                    isR2Command = true
+                )
+            )
+        }
+    }
+
+    fun buildLatestSessionDump(): String {
+        val sess = activeTerminalSession()
+        val last = sess.history.lastOrNull {
+            it.command !in listOf("save", "export", "help", "r2", "exit", "q", "quit") && it.output.isNotBlank()
+        }
+        val target = _uiState.value.activeFile?.name ?: "no_target"
+        return if (last != null) {
+            "# RE FORGE Dump (${sess.title})\n# Target: $target\n# Command: ${last.command}\n# ----------------------------------------\n${last.output}"
+        } else {
+            sess.history.joinToString("\n\n") { "$ ${it.command}\n${it.output}" }
+        }
+    }
+
+    fun refreshSavedForgeFiles() {
+        _uiState.value = _uiState.value.copy(savedForgeFiles = savedFileManager.listSavedFiles())
+    }
+
+    fun saveDumpToForgeVault(text: String) {
+        val payload = text.ifBlank { buildLatestSessionDump() }
+        if (payload.isBlank()) return
+        val base = (_uiState.value.activeFile?.nameWithoutExtension ?: "r2_dump").replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
+        savedFileManager.saveTextDump("${base}_${stamp}.txt", payload)
+        refreshSavedForgeFiles()
+    }
+
+    fun importFileDirectToForge(uri: Uri) {
+        viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
+            savedFileManager.importUri(uri)
+            refreshSavedForgeFiles()
+        }
+    }
+
+    fun deleteSavedForgeFile(item: SavedForgeFile) {
+        savedFileManager.deleteFile(item)
+        refreshSavedForgeFiles()
+    }
+
+    fun openSavedForgeFileInWorkstation(file: java.io.File) {
+        openWorkspaceFile(file)
     }
 }
