@@ -171,7 +171,7 @@ fun ToolsScreen(
                                             tint = ForgeTextMuted,
                                             modifier = Modifier
                                                 .size(13.dp)
-                                                .clickable { viewModel.closeTerminalSession(session.id) }
+                                                .clickable { viewModel.closeTerminalSession(context, session.id) }
                                         )
                                     }
                                 }
@@ -218,7 +218,7 @@ fun ToolsScreen(
                             shape = RoundedCornerShape(6.dp),
                             color = ForgeRose.copy(alpha = 0.16f),
                             border = BorderStroke(1.dp, ForgeRose.copy(alpha = 0.55f)),
-                            modifier = Modifier.clickable { viewModel.stopActiveSessionCommand() }
+                            modifier = Modifier.clickable { viewModel.stopActiveSessionCommand(context) }
                         ) {
                             Row(
                                 modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
@@ -251,7 +251,7 @@ fun ToolsScreen(
                             shape = RoundedCornerShape(6.dp),
                             color = ForgeRose.copy(alpha = 0.14f),
                             border = BorderStroke(1.dp, ForgeRose.copy(alpha = 0.45f)),
-                            modifier = Modifier.clickable { viewModel.exitActiveR2Session() }
+                            modifier = Modifier.clickable { viewModel.exitActiveR2Session(context) }
                         ) {
                             Text(
                                 text = "Exit r2",
@@ -265,7 +265,7 @@ fun ToolsScreen(
                         Spacer(modifier = Modifier.width(6.dp))
                     }
                     IconButton(
-                        onClick = { viewModel.saveDumpToForgeVault("") },
+                        onClick = { viewModel.saveDumpToForgeVault(context, "") },
                         modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
@@ -276,7 +276,7 @@ fun ToolsScreen(
                         )
                     }
                     IconButton(
-                        onClick = { viewModel.executeSessionCommand("clear") },
+                        onClick = { viewModel.executeSessionCommand(context, "clear") },
                         modifier = Modifier.size(28.dp)
                     ) {
                         Icon(
@@ -306,7 +306,7 @@ fun ToolsScreen(
                                 },
                                 onSaveDump = {
                                     val payload = "# Command: ${entry.command}\n# Target: ${state.activeFile?.name ?: "none"}\n\n${entry.output}"
-                                    viewModel.saveDumpToForgeVault(payload)
+                                    viewModel.saveDumpToForgeVault(context, payload)
                                 }
                             )
                         }
@@ -332,7 +332,7 @@ fun ToolsScreen(
                             ),
                             modifier = Modifier.clickable {
                                 if (!activeSession.isRunning) {
-                                    viewModel.executeSessionCommand(chip)
+                                    viewModel.executeSessionCommand(context, chip)
                                 }
                             }
                         ) {
@@ -387,7 +387,7 @@ fun ToolsScreen(
                                 if (input.isNotBlank() && !activeSession.isRunning) {
                                     val cmd = input
                                     input = ""
-                                    viewModel.executeSessionCommand(cmd)
+                                    viewModel.executeSessionCommand(context, cmd)
                                 }
                             }),
                             modifier = Modifier.fillMaxWidth()
@@ -395,7 +395,7 @@ fun ToolsScreen(
                     }
                     if (activeSession.isRunning) {
                         IconButton(
-                            onClick = { viewModel.stopActiveSessionCommand() },
+                            onClick = { viewModel.stopActiveSessionCommand(context) },
                             modifier = Modifier.size(30.dp)
                         ) {
                             Icon(
@@ -410,7 +410,7 @@ fun ToolsScreen(
                                 if (input.isNotBlank()) {
                                     val cmd = input
                                     input = ""
-                                    viewModel.executeSessionCommand(cmd)
+                                    viewModel.executeSessionCommand(context, cmd)
                                 }
                             },
                             modifier = Modifier.size(30.dp)

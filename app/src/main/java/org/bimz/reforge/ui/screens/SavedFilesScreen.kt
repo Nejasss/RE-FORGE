@@ -90,12 +90,12 @@ fun SavedFilesScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
         if (uri != null) {
-            viewModel.importFileDirectToForge(uri)
+            viewModel.importFileDirectToForge(context, uri)
         }
     }
 
     LaunchedEffect(Unit) {
-        viewModel.refreshSavedForgeFiles()
+        viewModel.refreshSavedForgeFiles(context)
     }
 
     Column(
@@ -198,7 +198,7 @@ fun SavedFilesScreen(
                             viewModel.openSavedForgeFileInWorkstation(item.file)
                             onNavigateToHex()
                         },
-                        onDelete = { viewModel.deleteSavedForgeFile(item) }
+                        onDelete = { viewModel.deleteSavedForgeFile(context, item) }
                     )
                 }
             }
