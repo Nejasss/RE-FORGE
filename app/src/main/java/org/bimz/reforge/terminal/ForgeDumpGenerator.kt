@@ -93,7 +93,7 @@ object ForgeDumpGenerator {
     fun parseArgs(rawArg: String): Pair<DumpMode, DumpFormat>? {
         var mode = DumpMode.FULL
         var format = DumpFormat.TXT
-        val tokens = rawArg.trim().split(Regex("\s+")).filter { it.isNotEmpty() }
+        val tokens = rawArg.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
         for (tok in tokens) {
             val m = DumpMode.fromToken(tok)
             val f = DumpFormat.fromToken(tok)
@@ -177,8 +177,7 @@ object ForgeDumpGenerator {
         BufferedReader(InputStreamReader(proc.inputStream, Charsets.UTF_8)).use { br ->
             var line: String?
             while (br.readLine().also { line = it } != null) {
-                rawOut.append(line).append('
-')
+                rawOut.append(line).append('\n')
                 val now = System.currentTimeMillis()
                 if (now - lastTick >= 650L) {
                     onStatus("[dump] Analyzing & collecting symbols (${rawOut.length / 1024} KB read)...")
@@ -278,9 +277,7 @@ object ForgeDumpGenerator {
         } else {
             listOf(mode)
         }
-        return modes.joinToString("
-
-") { m ->
+        return modes.joinToString("\n\n") { m ->
             when (m) {
                 DumpMode.EXPORTS -> fmtTxtExports(data.exports)
                 DumpMode.IMPORTS -> fmtTxtImports(data.imports)
@@ -340,7 +337,7 @@ object ForgeDumpGenerator {
             val off = hexAddr(s.optLong("vaddr", 0L))
             val valStr = s.optString("string", "")
             val typ = s.optString("type", "")
-            appendLine("[$off] ($typ) "$valStr"")
+            appendLine("[$off] ($typ) \"$valStr\"")
         }
     }.trimEnd()
 
@@ -363,9 +360,7 @@ object ForgeDumpGenerator {
         } else {
             listOf(mode)
         }
-        return modes.joinToString("
-
-") { m ->
+        return modes.joinToString("\n\n") { m ->
             when (m) {
                 DumpMode.EXPORTS -> fmtMdExports(data.exports)
                 DumpMode.IMPORTS -> fmtMdImports(data.imports)
@@ -426,8 +421,7 @@ object ForgeDumpGenerator {
         for (i in 0 until arr.length()) {
             val s = arr.optJSONObject(i) ?: continue
             val off = hexAddr(s.optLong("vaddr", 0L))
-            val valEsc = s.optString("string", "").replace("|", "\|").replace("
-", "\n")
+            val valEsc = s.optString("string", "").replace("|", "\\|").replace("\n", "\\n")
             val typ = s.optString("type", "")
             appendLine("| `$off` | $typ | `$valEsc` |")
         }
