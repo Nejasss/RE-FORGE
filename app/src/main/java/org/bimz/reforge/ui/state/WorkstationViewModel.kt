@@ -1,6 +1,5 @@
 package org.bimz.reforge.ui.state
 
-import android.net.Uri
 import org.bimz.reforge.storage.SavedFileManager
 import org.bimz.reforge.storage.SavedForgeFile
 import java.text.SimpleDateFormat
@@ -626,13 +625,6 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
             app.engineRegistry.recordTestResult(engineId, result)
         }
     }
-}
-
-class WorkstationViewModelFactory(private val app: ReForgeApplication) : ViewModelProvider.Factory {
-    @Suppress("UNCHECKED_CAST")
-    override fun <T : ViewModel> create(modelClass: Class<T>): T {
-        return WorkstationViewModel(app) as T
-    }
 
     private val savedFileManager by lazy { SavedFileManager(getApplication()) }
     private var sessionCounter = 1
@@ -777,7 +769,7 @@ class WorkstationViewModelFactory(private val app: ReForgeApplication) : ViewMod
         refreshSavedForgeFiles()
     }
 
-    fun importFileDirectToForge(uri: Uri) {
+    fun importFileDirectToForge(uri: android.net.Uri) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             savedFileManager.importUri(uri)
             refreshSavedForgeFiles()
@@ -790,6 +782,13 @@ class WorkstationViewModelFactory(private val app: ReForgeApplication) : ViewMod
     }
 
     fun openSavedForgeFileInWorkstation(file: java.io.File) {
-        openWorkspaceFile(file)
+        
+    }
+}
+
+class WorkstationViewModelFactory(private val app: ReForgeApplication) : ViewModelProvider.Factory {
+    @Suppress("UNCHECKED_CAST")
+    override fun <T : ViewModel> create(modelClass: Class<T>): T {
+        return WorkstationViewModel(app) as T
     }
 }
