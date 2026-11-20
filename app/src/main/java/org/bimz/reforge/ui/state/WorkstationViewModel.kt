@@ -5,11 +5,13 @@ import android.os.Build
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.viewModelScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.bimz.reforge.BuildConfig
 import org.bimz.reforge.ReForgeApplication
 import org.bimz.reforge.binary.NativeBinaryBridge
@@ -24,6 +26,7 @@ import org.bimz.reforge.hex.HexEditorSession
 import org.bimz.reforge.storage.AnalysisHistoryEntity
 import org.bimz.reforge.terminal.ConsoleEntry
 import java.io.File
+import java.io.RandomAccessFile
 
 enum class WorkstationDestination(val label: String) {
     HOME("Home"),
@@ -62,15 +65,21 @@ data class WorkstationUiState(
     val hexPageOffset: Long = 0L,
     val hexPageBytes: ByteArray = ByteArray(0),
     val hexSearchStatus: String = "",
+    val hexLastMatchOffset: Long = -1L,
+    val hexLastMatchLength: Int = 0,
     val hexCanUndo: Boolean = false,
     val hexCanRedo: Boolean = false,
+    val hexRevision: Int = 0,
 
     // Patch & Compare state
     val modifiedEntries: List<ModifiedEntryRecord> = emptyList(),
     val comparisonReport: FileComparisonReport? = null,
 
-    // Console state
-    val consoleHistory: List<ConsoleEntry> = emptyList()
+    // Console & Sticky r2 Session state
+    val consoleHistory: List<ConsoleEntry> = emptyList(),
+    val r2SessionActive: Boolean = false,
+    val pendingDumpSaveText: String? = null,
+    val pendingDumpSaveFilename: String = "reforge_r2_dump.txt"
 )
 
 class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
@@ -119,6 +128,10 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
         _uiState.update { it.copy(errorMessage = null) }
     }
 
+    fun clearPendingDumpSave() {
+        _uiState.update { it.copy(pendingDumpSaveText = null) }
+    }
+
     fun importFileFromUri(uri: Uri, targetRouteAfterImport: WorkstationDestination? = null) {
         viewModelScope.launch {
             _uiState.update { it.copy(isBusy = true, busyMessage = "Importing target into isolated workspace...", errorMessage = null) }
@@ -152,7 +165,10 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
                 elfReport = null,
                 instructions = emptyList(),
                 r2Output = "",
-                hexPageOffset = 0L
+                hexPageOffset = 0L,
+                hexLastMatchOffset = -1L,
+                hexLastMatchLength = 0,
+                hexRevision = it.hexRevision + 1
             )
         }
 
@@ -288,24 +304,87 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
         }
     }
 
-    fun searchHexBytes(hexQuery: String) {
-        val session = hexSession ?: return
+    fun searchHexOrAscii(query: String, isAsciiMode: Boolean, startOffset: Long, onFound: (Long, Int) -> Unit) {
+        val project = _uiState.value.activeProject ?: return
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) {
+            _uiState.update { it.copy(hexSearchStatus = "Enter a search query.") }
+            return
+        }
         viewModelScope.launch {
-            runCatching {
-                val found = session.searchHexPattern(_uiState.value.hexPageOffset, hexQuery)
-                if (found >= 0L) {
-                    loadHexPage(found)
-                    _uiState.update { it.copy(hexSearchStatus = "Match at offset 0x${found.toString(16)}") }
+            val needle: ByteArray = try {
+                if (isAsciiMode) {
+                    trimmed.toByteArray(Charsets.UTF_8)
                 } else {
-                    _uiState.update { it.copy(hexSearchStatus = "Pattern not found from current offset.") }
+                    val clean = trimmed.replace("0x", "", ignoreCase = true).replace(Regex("\\s+"), "")
+                    require(clean.length % 2 == 0) { "Hex string must have even length" }
+                    ByteArray(clean.length / 2) { idx ->
+                        clean.substring(idx * 2, idx * 2 + 2).toInt(16).toByte()
+                    }
                 }
-            }.onFailure { err ->
-                _uiState.update { it.copy(hexSearchStatus = "Invalid hex query: ${err.message}") }
+            } catch (e: Exception) {
+                _uiState.update { it.copy(hexSearchStatus = "Invalid query: ${e.message}") }
+                return@launch
+            }
+
+            if (needle.isEmpty()) return@launch
+
+            val foundAt = withContext(Dispatchers.IO) {
+                findBytesInFile(File(project.workingPath), needle, startOffset.coerceAtLeast(0L))
+            }
+
+            if (foundAt >= 0L) {
+                _uiState.update {
+                    it.copy(
+                        hexPageOffset = foundAt,
+                        hexLastMatchOffset = foundAt,
+                        hexLastMatchLength = needle.size,
+                        hexSearchStatus = "Match (${needle.size}B) at 0x${foundAt.toString(16).uppercase()}"
+                    )
+                }
+                onFound(foundAt, needle.size)
+            } else {
+                _uiState.update {
+                    it.copy(hexSearchStatus = "Not found from 0x${startOffset.toString(16).uppercase()}. Try from 0x0.")
+                }
             }
         }
     }
 
-    fun patchHexBytes(offsetHex: String, replacementHex: String) {
+    private fun findBytesInFile(file: File, needle: ByteArray, startOffset: Long): Long {
+        if (!file.exists() || needle.isEmpty()) return -1L
+        val fileLen = file.length()
+        if (startOffset >= fileLen) return -1L
+
+        RandomAccessFile(file, "r").use { raf ->
+            val chunkSize = 65536
+            val overlap = needle.size - 1
+            val buf = ByteArray(chunkSize + overlap)
+            var pos = startOffset
+            while (pos < fileLen) {
+                raf.seek(pos)
+                val toRead = minOf(buf.size.toLong(), fileLen - pos).toInt()
+                val read = raf.read(buf, 0, toRead)
+                if (read < needle.size) break
+
+                val limit = read - needle.size
+                for (i in 0..limit) {
+                    var matched = true
+                    for (j in needle.indices) {
+                        if (buf[i + j] != needle[j]) {
+                            matched = false
+                            break
+                        }
+                    }
+                    if (matched) return pos + i
+                }
+                pos += (read - overlap).coerceAtLeast(1)
+            }
+        }
+        return -1L
+    }
+
+    fun patchHexBytes(offsetHex: String, replacementHex: String, onPatched: (() -> Unit)? = null) {
         val session = hexSession ?: return
         val offset = offsetHex.trim().removePrefix("0x").toLongOrNull(16)
         if (offset == null) {
@@ -318,7 +397,15 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
                 onSuccess = {
                     loadHexPage(offset)
                     refreshModifiedEntries()
-                    _uiState.update { it.copy(statusBanner = "Patched working copy at 0x${offset.toString(16)}.") }
+                    _uiState.update {
+                        it.copy(
+                            hexRevision = it.hexRevision + 1,
+                            hexCanUndo = session.canUndo,
+                            hexCanRedo = session.canRedo,
+                            statusBanner = "Patched working copy at 0x${offset.toString(16).uppercase()}."
+                        )
+                    }
+                    onPatched?.invoke()
                 },
                 onFailure = { err ->
                     _uiState.update { it.copy(errorMessage = "Hex patch failed: ${err.message}") }
@@ -333,6 +420,13 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
             session.undo()
             loadHexPage(_uiState.value.hexPageOffset)
             refreshModifiedEntries()
+            _uiState.update {
+                it.copy(
+                    hexRevision = it.hexRevision + 1,
+                    hexCanUndo = session.canUndo,
+                    hexCanRedo = session.canRedo
+                )
+            }
         }
     }
 
@@ -342,6 +436,48 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
             session.redo()
             loadHexPage(_uiState.value.hexPageOffset)
             refreshModifiedEntries()
+            _uiState.update {
+                it.copy(
+                    hexRevision = it.hexRevision + 1,
+                    hexCanUndo = session.canUndo,
+                    hexCanRedo = session.canRedo
+                )
+            }
+        }
+    }
+
+    fun exportWorkingCopyToUri(destUri: Uri) {
+        val project = _uiState.value.activeProject ?: return
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    app.contentResolver.openOutputStream(destUri)?.use { out ->
+                        File(project.workingPath).inputStream().use { input ->
+                            input.copyTo(out)
+                        }
+                    } ?: error("Unable to open destination URI")
+                }
+            }.onSuccess {
+                _uiState.update { it.copy(statusBanner = "Exported patched binary successfully.") }
+            }.onFailure { err ->
+                _uiState.update { it.copy(errorMessage = "Export failed: ${err.message}") }
+            }
+        }
+    }
+
+    fun exportTextToUri(destUri: Uri, content: String) {
+        viewModelScope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) {
+                    app.contentResolver.openOutputStream(destUri)?.use { out ->
+                        out.write(content.toByteArray(Charsets.UTF_8))
+                    } ?: error("Unable to open destination URI")
+                }
+            }.onSuccess {
+                _uiState.update { it.copy(statusBanner = "Saved dump to file.") }
+            }.onFailure { err ->
+                _uiState.update { it.copy(errorMessage = "Save dump failed: ${err.message}") }
+            }
         }
     }
 
@@ -364,15 +500,70 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
         }
     }
 
+    fun exitR2Session() {
+        if (!_uiState.value.r2SessionActive) return
+        _uiState.update {
+            it.copy(
+                r2SessionActive = false,
+                consoleHistory = it.consoleHistory + ConsoleEntry(
+                    command = "exit",
+                    output = "[r2] Exited Radare2 interactive session.",
+                    isError = false,
+                    isR2Command = true
+                )
+            )
+        }
+    }
+
     fun runConsoleCommand(command: String) {
         if (command.trim().equals("clear", ignoreCase = true)) {
             _uiState.update { it.copy(consoleHistory = emptyList()) }
             return
         }
         val activeFile = _uiState.value.activeProject?.let { File(it.workingPath) }
+        val wasR2Mode = _uiState.value.r2SessionActive
+
         viewModelScope.launch {
-            val entry = app.consoleRunner.execute(command, activeFile)
-            _uiState.update { it.copy(consoleHistory = it.consoleHistory + entry) }
+            var inserted = false
+            val outcome = app.consoleRunner.executeInteractive(
+                rawInput = command,
+                activeFile = activeFile,
+                currentR2Mode = wasR2Mode
+            ) { liveEntry ->
+                _uiState.update { current ->
+                    val updatedList = if (!inserted) {
+                        inserted = true
+                        current.consoleHistory + liveEntry
+                    } else {
+                        current.consoleHistory.map { existing ->
+                            if (existing.id == liveEntry.id) liveEntry else existing
+                        }
+                    }
+                    current.copy(consoleHistory = updatedList, r2SessionActive = true)
+                }
+            }
+
+            _uiState.update { current ->
+                val updatedList = if (!inserted) {
+                    current.consoleHistory + outcome.entry
+                } else {
+                    current.consoleHistory.map { existing ->
+                        if (existing.id == outcome.entry.id) outcome.entry else existing
+                    }
+                }
+                val latestDump = if (outcome.requestSaveDump) {
+                    updatedList.lastOrNull { !it.isRunning && it.output.isNotBlank() && it.command != "save" }?.output
+                } else {
+                    current.pendingDumpSaveText
+                }
+                val baseName = current.activeProject?.originalFileName ?: "reforge"
+                current.copy(
+                    consoleHistory = updatedList,
+                    r2SessionActive = outcome.nextR2Mode,
+                    pendingDumpSaveText = latestDump,
+                    pendingDumpSaveFilename = "${baseName}_r2_dump.txt"
+                )
+            }
         }
     }
 

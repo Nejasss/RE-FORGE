@@ -1,8 +1,10 @@
 package org.bimz.reforge.ui.screens
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -27,6 +29,7 @@ import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.ClearAll
 import androidx.compose.material.icons.outlined.PlayArrow
+import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -62,22 +65,45 @@ fun ToolsScreen(
 ) {
     var commandText by remember { mutableStateOf("") }
     var copiedNotice by remember { mutableStateOf<String?>(null) }
+    var textToSave by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     val clipboard = LocalClipboardManager.current
     val bottomClearance = LocalBottomClearance.current
 
+    val saveDumpLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.CreateDocument("text/plain")
+    ) { uri: Uri? ->
+        val payload = textToSave
+        if (uri != null && payload != null) {
+            viewModel.exportTextToUri(uri, payload)
+            copiedNotice = "Dump saved to device storage."
+        }
+        textToSave = null
+    }
+
+    LaunchedEffect(state.pendingDumpSaveText) {
+        val pending = state.pendingDumpSaveText
+        if (pending != null) {
+            textToSave = pending
+            viewModel.clearPendingDumpSave()
+            saveDumpLauncher.launch(state.pendingDumpSaveFilename)
+        }
+    }
+
     val r2Engine = state.engines.firstOrNull { it.id == "radare2_core" }
     val r2Ready = r2Engine?.enabled == true && r2Engine.initialized
+    val inR2Mode = state.r2SessionActive
 
     val termBg = Color(0xFF090C10)
     val termBarBg = Color(0xFF11161F)
     val termBorder = Color(0xFF263142)
     val promptGreen = Color(0xFF4ADE80)
+    val promptR2 = Color(0xFFFBBF24)
     val promptPath = Color(0xFF38BDF8)
     val termStdout = Color(0xFFE2E8F0)
     val termStderr = Color(0xFFF87171)
 
-    LaunchedEffect(state.consoleHistory.size, bottomClearance) {
+    LaunchedEffect(state.consoleHistory.size, state.consoleHistory.lastOrNull()?.output, bottomClearance) {
         if (state.consoleHistory.isNotEmpty()) {
             listState.animateScrollToItem(state.consoleHistory.size)
         }
@@ -89,6 +115,13 @@ fun ToolsScreen(
         copiedNotice = null
         viewModel.runConsoleCommand(trimmed)
         commandText = ""
+    }
+
+    fun triggerSaveEntry(commandLabel: String, outputText: String) {
+        val baseName = (state.activeProject?.originalFileName ?: "reforge").replace(Regex("[^a-zA-Z0-9._-]"), "_")
+        val safeCmd = commandLabel.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(24)
+        textToSave = "# Target: ${state.activeProject?.originalFileName ?: "none"}\n# Command: $commandLabel\n\n$outputText"
+        saveDumpLauncher.launch("${baseName}_${safeCmd}_dump.txt")
     }
 
     Column(
@@ -107,42 +140,77 @@ fun ToolsScreen(
                 .fillMaxWidth(),
             shape = RoundedCornerShape(12.dp),
             color = termBg,
-            border = BorderStroke(1.dp, termBorder)
+            border = BorderStroke(1.dp, if (inR2Mode) promptR2.copy(alpha = 0.5f) else termBorder)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Termux Session Header Bar
+                // Termux / Radare2 Session Header Bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(termBarBg)
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                        .padding(horizontal = 10.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Text(
-                            text = "termux@reforge",
+                            text = if (inR2Mode) "r2@arm64" else "termux@reforge",
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
                             ),
-                            color = promptGreen
+                            color = if (inR2Mode) promptR2 else promptGreen
                         )
-                        Spacer(modifier = Modifier.width(8.dp))
+                        Spacer(modifier = Modifier.width(6.dp))
                         StatusPill(
-                            label = if (r2Ready) "r2 READY" else "r2 OFF/ABSENT",
-                            tone = if (r2Ready) BadgeTone.PASS else BadgeTone.WARNING
+                            label = if (inR2Mode) "r2 SESSION" else if (r2Ready) "r2 READY" else "r2 OFF",
+                            tone = if (inR2Mode) BadgeTone.WARNING else if (r2Ready) BadgeTone.PASS else BadgeTone.NEUTRAL
                         )
                     }
-                    IconButton(
-                        onClick = { viewModel.runConsoleCommand("clear") },
-                        modifier = Modifier.size(44.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.ClearAll,
-                            contentDescription = "Clear terminal",
-                            tint = Color(0xFF94A3B8)
-                        )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        if (inR2Mode) {
+                            Surface(
+                                onClick = { viewModel.exitR2Session() },
+                                shape = RoundedCornerShape(6.dp),
+                                color = Color(0xFF291D16),
+                                border = BorderStroke(1.dp, promptR2.copy(alpha = 0.6f))
+                            ) {
+                                Text(
+                                    text = "Exit r2",
+                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
+                                    color = promptR2,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                                )
+                            }
+                            Spacer(modifier = Modifier.width(4.dp))
+                        }
+                        IconButton(
+                            onClick = {
+                                if (state.consoleHistory.isNotEmpty()) {
+                                    val fullLog = state.consoleHistory.joinToString("\n\n") {
+                                        "$ ${it.command}\n${it.output}"
+                                    }
+                                    triggerSaveEntry("session", fullLog)
+                                }
+                            },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Save,
+                                contentDescription = "Save all terminal dumps",
+                                tint = promptPath
+                            )
+                        }
+                        IconButton(
+                            onClick = { viewModel.runConsoleCommand("clear") },
+                            modifier = Modifier.size(38.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.ClearAll,
+                                contentDescription = "Clear terminal",
+                                tint = Color(0xFF94A3B8)
+                            )
+                        }
                     }
                 }
 
@@ -153,7 +221,7 @@ fun ToolsScreen(
                         .weight(1f)
                         .fillMaxWidth()
                         .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                    verticalArrangement = Arrangement.spacedBy(12.dp)
                 ) {
                     item(key = "motd") {
                         Column {
@@ -168,7 +236,7 @@ fun ToolsScreen(
                                 color = Color(0xFF94A3B8)
                             )
                             Text(
-                                text = "Commands: r2 <cmd> | elf | capstone <arch> <off> | hash | engines | clear",
+                                text = "Tip: Type 'r2' to lock into Radare2 mode, then run 'aaa', 'AA', 'afl', 'pdf @ main', etc.",
                                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                                 color = Color(0xFF94A3B8)
                             )
@@ -183,29 +251,33 @@ fun ToolsScreen(
                         }
                     }
 
-                    items(state.consoleHistory) { entry ->
-                        Column(
-                            modifier = Modifier
-                                .fillMaxWidth()
-                                .clickable {
-                                    clipboard.setText(AnnotatedString(entry.output))
-                                    copiedNotice = "Copied output of '${entry.command}' to clipboard."
-                                }
-                        ) {
+                    items(state.consoleHistory, key = { it.id }) { entry ->
+                        Column(modifier = Modifier.fillMaxWidth()) {
                             Row(verticalAlignment = Alignment.CenterVertically) {
-                                Text(
-                                    text = "~/workspace ",
-                                    style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
-                                    color = promptPath
-                                )
-                                Text(
-                                    text = "$ ",
-                                    style = MaterialTheme.typography.labelMedium.copy(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.Bold
-                                    ),
-                                    color = promptGreen
-                                )
+                                if (entry.isR2Command) {
+                                    Text(
+                                        text = "r2 [0x00000000]> ",
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = promptR2
+                                    )
+                                } else {
+                                    Text(
+                                        text = "~/workspace ",
+                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
+                                        color = promptPath
+                                    )
+                                    Text(
+                                        text = "$ ",
+                                        style = MaterialTheme.typography.labelMedium.copy(
+                                            fontFamily = FontFamily.Monospace,
+                                            fontWeight = FontWeight.Bold
+                                        ),
+                                        color = promptGreen
+                                    )
+                                }
                                 Text(
                                     text = entry.command,
                                     style = MaterialTheme.typography.labelMedium.copy(
@@ -215,20 +287,70 @@ fun ToolsScreen(
                                     color = Color.White
                                 )
                             }
-                            Spacer(modifier = Modifier.height(2.dp))
+                            Spacer(modifier = Modifier.height(3.dp))
                             Text(
                                 text = entry.output,
                                 style = MaterialTheme.typography.labelSmall.copy(
                                     fontFamily = FontFamily.Monospace,
                                     lineHeight = 16.sp
                                 ),
-                                color = if (entry.isError) termStderr else termStdout
+                                color = when {
+                                    entry.isRunning -> promptR2
+                                    entry.isError -> termStderr
+                                    else -> termStdout
+                                }
                             )
+                            if (!entry.isRunning && entry.output.isNotBlank()) {
+                                Spacer(modifier = Modifier.height(4.dp))
+                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                                    Surface(
+                                        onClick = {
+                                            clipboard.setText(AnnotatedString(entry.output))
+                                            copiedNotice = "Copied output of '${entry.command}'."
+                                        },
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = Color(0xFF161E2B),
+                                        border = BorderStroke(1.dp, termBorder)
+                                    ) {
+                                        Text(
+                                            text = "Copy",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 10.sp
+                                            ),
+                                            color = Color(0xFF94A3B8),
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                    Surface(
+                                        onClick = { triggerSaveEntry(entry.command, entry.output) },
+                                        shape = RoundedCornerShape(4.dp),
+                                        color = Color(0xFF162332),
+                                        border = BorderStroke(1.dp, promptPath.copy(alpha = 0.45f))
+                                    ) {
+                                        Text(
+                                            text = "Save Dump",
+                                            style = MaterialTheme.typography.labelSmall.copy(
+                                                fontFamily = FontFamily.Monospace,
+                                                fontSize = 10.sp
+                                            ),
+                                            color = promptPath,
+                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                        )
+                                    }
+                                }
+                            }
                         }
                     }
                 }
 
-                // Termux Extra-Keys Quick Bar (stays pinned directly above input & keyboard)
+                // Dynamic Extra-Keys Bar (switches automatically between Shell keys and Sticky r2 keys)
+                val quickKeys = if (inR2Mode) {
+                    listOf("aaa", "AA", "afl", "ij", "iSj", "isj", "izz", "pdf @ main", "px 64", "save", "exit")
+                } else {
+                    listOf("r2", "r2 aaa", "r2 AA", "r2 afl", "r2 ij", "elf", "capstone arm64 0", "hash", "save", "clear")
+                }
+
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -237,25 +359,13 @@ fun ToolsScreen(
                         .padding(horizontal = 8.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    listOf(
-                        "r2 aaa; afl",
-                        "r2 ij",
-                        "r2 iSj",
-                        "r2 isj",
-                        "r2 izz",
-                        "r2 pd 64",
-                        "elf",
-                        "capstone arm64 0",
-                        "hash",
-                        "help",
-                        "clear"
-                    ).forEach { keyCmd ->
+                    quickKeys.forEach { keyCmd ->
                         Surface(
                             onClick = { submitCommand(keyCmd) },
                             shape = RoundedCornerShape(6.dp),
-                            color = Color(0xFF1A2230),
-                            border = BorderStroke(1.dp, termBorder),
-                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 40.dp)
+                            color = if (inR2Mode) Color(0xFF1E1B16) else Color(0xFF1A2230),
+                            border = BorderStroke(1.dp, if (inR2Mode) promptR2.copy(alpha = 0.4f) else termBorder),
+                            modifier = Modifier.defaultMinSize(minWidth = 44.dp, minHeight = 38.dp)
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
@@ -264,14 +374,14 @@ fun ToolsScreen(
                                 Text(
                                     text = keyCmd,
                                     style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                                    color = termStdout
+                                    color = if (inR2Mode) promptR2 else termStdout
                                 )
                             }
                         }
                     }
                 }
 
-                // Bottom Prompt Input Line (sits directly above keyboard when IME is open)
+                // Bottom Prompt Input Line (shows `r2 [0x00000000]>` when inside r2 session)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -280,12 +390,12 @@ fun ToolsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "$ ",
+                        text = if (inR2Mode) "r2 [0x00000000]> " else "$ ",
                         style = MaterialTheme.typography.bodyMedium.copy(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold
                         ),
-                        color = promptGreen
+                        color = if (inR2Mode) promptR2 else promptGreen
                     )
                     BasicTextField(
                         value = commandText,
@@ -295,7 +405,7 @@ fun ToolsScreen(
                             fontFamily = FontFamily.Monospace,
                             color = Color.White
                         ),
-                        cursorBrush = SolidColor(promptGreen),
+                        cursorBrush = SolidColor(if (inR2Mode) promptR2 else promptGreen),
                         keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                         keyboardActions = KeyboardActions(onSend = { submitCommand(commandText) }),
                         modifier = Modifier
@@ -305,7 +415,7 @@ fun ToolsScreen(
                         decorationBox = { innerTextField ->
                             if (commandText.isEmpty()) {
                                 Text(
-                                    text = "r2 aaa; afl ...",
+                                    text = if (inR2Mode) "aaa | AA | afl | pdf @ main | exit" else "r2 | elf | hash ...",
                                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                                     color = Color(0xFF64748B)
                                 )
@@ -320,7 +430,7 @@ fun ToolsScreen(
                         Icon(
                             imageVector = Icons.Outlined.PlayArrow,
                             contentDescription = "Execute command",
-                            tint = promptGreen
+                            tint = if (inR2Mode) promptR2 else promptGreen
                         )
                     }
                 }
