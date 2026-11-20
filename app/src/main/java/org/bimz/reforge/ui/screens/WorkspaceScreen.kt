@@ -86,13 +86,6 @@ fun WorkspaceScreen(
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Button(
-                        onClick = { viewModel.navigateTo(WorkstationDestination.BINARY) },
-                        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text("Analyze in Radare2")
-                    }
-                    OutlinedButton(
                         onClick = { viewModel.navigateTo(WorkstationDestination.TOOLS) },
                         modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
                         shape = RoundedCornerShape(8.dp)

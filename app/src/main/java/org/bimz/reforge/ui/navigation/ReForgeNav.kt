@@ -35,7 +35,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FolderOpen
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.FolderSpecial
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
@@ -90,7 +90,7 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
     val primaryDockItems = listOf(
         WorkstationDestination.HOME to Icons.Outlined.Home,
         WorkstationDestination.WORKSPACE to Icons.Outlined.FolderOpen,
-        WorkstationDestination.BINARY to Icons.Outlined.Memory,
+        WorkstationDestination.BINARY to Icons.Outlined.FolderSpecial,
         WorkstationDestination.TOOLS to Icons.Outlined.Terminal
     )
 

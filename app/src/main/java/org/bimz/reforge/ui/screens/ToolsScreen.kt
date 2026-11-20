@@ -50,7 +50,10 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
@@ -59,6 +62,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.bimz.reforge.terminal.ConsoleEntry
 import org.bimz.reforge.ui.navigation.LocalBottomClearance
+import org.bimz.reforge.ui.navigation.LocalIsKeyboardOpen
 import org.bimz.reforge.ui.state.TerminalSessionState
 import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
@@ -81,6 +85,9 @@ fun ToolsScreen(
 ) {
     var input by remember { mutableStateOf("") }
     val bottomClearance = LocalBottomClearance.current
+    val isKeyboardOpen = LocalIsKeyboardOpen.current
+    val focusRequester = remember { FocusRequester() }
+    val keyboardController = LocalSoftwareKeyboardController.current
     val activeSession = state.terminalSessions.firstOrNull { it.id == state.activeSessionId }
         ?: state.terminalSessions.firstOrNull()
         ?: TerminalSessionState("session-1", "Session 1", state.consoleHistory)
@@ -104,13 +111,14 @@ fun ToolsScreen(
         }
     }
 
+    val bottomPad = if (isKeyboardOpen) 6.dp else bottomClearance
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(ForgeBg)
             .imePadding()
             .padding(horizontal = 12.dp, vertical = 10.dp)
-            .padding(bottom = bottomClearance)
+            .padding(bottom = bottomPad)
     ) {
         Surface(
             modifier = Modifier
@@ -289,15 +297,25 @@ fun ToolsScreen(
                 }
 
                 // Terminal Buffer
-                SelectionContainer(modifier = Modifier.weight(1f)) {
-                    LazyColumn(
-                        state = listState,
-                        modifier = Modifier
-                            .fillMaxSize()
-                            .padding(horizontal = 12.dp, vertical = 8.dp),
-                        verticalArrangement = Arrangement.spacedBy(10.dp)
-                    ) {
-                        items(activeSession.history, key = { it.id }) { entry ->
+                LazyColumn(
+                    state = listState,
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    if (activeSession.history.isEmpty()) {
+                        item(key = "empty_hint") {
+                            Text(
+                                text = "Ready • Target: ${state.activeFile?.name ?: "None"} • Tap a command chip below or type 'r2' / 'help'",
+                                color = ForgeTextMuted,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp
+                            )
+                        }
+                    }
+                    items(activeSession.history, key = { it.id }) { entry ->
                             ConsoleEntryBlock(
                                 entry = entry,
                                 onCopy = {
@@ -308,8 +326,7 @@ fun ToolsScreen(
                                     val payload = "# Command: ${entry.command}\n# Target: ${state.activeFile?.name ?: "none"}\n\n${entry.output}"
                                     viewModel.saveDumpToForgeVault(context, payload)
                                 }
-                            )
-                        }
+                        )
                     }
                 }
 
@@ -352,6 +369,10 @@ fun ToolsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(ForgeElevated)
+                        .clickable {
+                            focusRequester.requestFocus()
+                            keyboardController?.show()
+                        }
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -390,7 +411,7 @@ fun ToolsScreen(
                                     viewModel.executeSessionCommand(context, cmd)
                                 }
                             }),
-                            modifier = Modifier.fillMaxWidth()
+                            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
                         )
                     }
                     if (activeSession.isRunning) {
@@ -445,18 +466,20 @@ private fun ConsoleEntryBlock(
             )
             Spacer(modifier = Modifier.height(3.dp))
         }
-        Text(
-            text = entry.output,
-            color = when {
-                entry.isError -> ForgeRose
-                entry.isRunning -> ForgeAmber
-                entry.command == "session" || entry.command == "target" -> ForgeEmerald
-                else -> ForgeTextPrimary
-            },
-            fontFamily = FontFamily.Monospace,
-            fontSize = 11.5.sp,
-            lineHeight = 16.sp
-        )
+        SelectionContainer {
+            Text(
+                text = entry.output,
+                color = when {
+                    entry.isError -> ForgeRose
+                    entry.isRunning -> ForgeAmber
+                    entry.command == "session" || entry.command == "target" -> ForgeEmerald
+                    else -> ForgeTextPrimary
+                },
+                fontFamily = FontFamily.Monospace,
+                fontSize = 11.5.sp,
+                lineHeight = 16.sp
+            )
+        }
         if (!entry.isRunning && entry.output.length > 24 && entry.command != "session" && entry.command != "target") {
             Spacer(modifier = Modifier.height(5.dp))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {

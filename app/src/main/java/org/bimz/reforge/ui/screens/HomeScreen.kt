@@ -107,7 +107,7 @@ fun HomeScreen(
                 ) {
                     Button(
                         onClick = {
-                            pendingTargetRoute = WorkstationDestination.BINARY
+                            pendingTargetRoute = WorkstationDestination.TOOLS
                             openDocLauncher.launch(arrayOf("*/*"))
                         },
                         modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
@@ -154,7 +154,7 @@ fun HomeScreen(
                     reason = "Select any executable, .so library, firmware dump, or script to analyze with Radare2.",
                     actionLabel = "Select File from Device",
                     onAction = {
-                        pendingTargetRoute = WorkstationDestination.BINARY
+                        pendingTargetRoute = WorkstationDestination.TOOLS
                         openDocLauncher.launch(arrayOf("*/*"))
                     }
                 )
@@ -173,18 +173,18 @@ fun HomeScreen(
                         verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Button(
-                            onClick = { viewModel.selectProject(project, WorkstationDestination.BINARY) },
-                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                            shape = RoundedCornerShape(8.dp)
-                        ) {
-                            Text("Radare2")
-                        }
-                        OutlinedButton(
                             onClick = { viewModel.selectProject(project, WorkstationDestination.TOOLS) },
                             modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
                             shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("Terminal")
+                        }
+                        OutlinedButton(
+                            onClick = { viewModel.selectProject(project, WorkstationDestination.WORKSPACE) },
+                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                            shape = RoundedCornerShape(8.dp)
+                        ) {
+                            Text("File Info")
                         }
                         OutlinedButton(
                             onClick = { viewModel.deleteProject(project.id) },
