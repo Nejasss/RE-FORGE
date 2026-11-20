@@ -1,5 +1,7 @@
 package org.bimz.reforge.terminal
 
+import android.content.Context
+
 import org.bimz.reforge.engines.Radare2Bridge
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -59,6 +61,7 @@ class ConsoleCommandRunner {
     }
 
     fun executeInteractive(
+        context: Context,
         rawInput: String,
         activeFile: File?,
         sessionId: String,
@@ -117,6 +120,7 @@ class ConsoleCommandRunner {
                 )
             }
             return runInPersistentR2(
+                context = context,
                 sessionId = sessionId,
                 targetFile = activeFile,
                 r2Command = trimmed,
@@ -151,7 +155,7 @@ class ConsoleCommandRunner {
             )
 
             "engines" -> {
-                val bridge = Radare2Bridge()
+                val bridge = Radare2Bridge(context)
                 val bin = bridge.resolveBinary()
                 val ver = runCatching { bridge.getVersion() }.getOrDefault("unknown")
                 val status = if (bin != null && bin.exists()) {
@@ -212,6 +216,7 @@ class ConsoleCommandRunner {
                 }
                 if (arg.isEmpty()) {
                     val initOutcome = runInPersistentR2(
+                        context = context,
                         sessionId = sessionId,
                         targetFile = activeFile,
                         r2Command = "s",
@@ -230,6 +235,7 @@ class ConsoleCommandRunner {
                     )
                 } else {
                     val oneShot = runInPersistentR2(
+                        context = context,
                         sessionId = sessionId,
                         targetFile = activeFile,
                         r2Command = arg,
@@ -256,14 +262,14 @@ class ConsoleCommandRunner {
         }
     }
 
-    private fun ensurePersistentSession(sessionId: String, targetFile: File): Result<PersistentR2Session> {
+    private fun ensurePersistentSession(context: Context, sessionId: String, targetFile: File): Result<PersistentR2Session> {
         val existing = sessions[sessionId]
         if (existing != null && existing.alive.get() && existing.process.isAlive && existing.targetPath == targetFile.absolutePath) {
             return Result.success(existing)
         }
         closeSession(sessionId)
 
-        val bridge = Radare2Bridge()
+        val bridge = Radare2Bridge(context)
         val r2Bin = bridge.resolveBinary()
             ?: return Result.failure(IllegalStateException("Radare2 binary not found."))
 
@@ -317,13 +323,14 @@ class ConsoleCommandRunner {
     }
 
     private fun runInPersistentR2(
+        context: Context,
         sessionId: String,
         targetFile: File,
         r2Command: String,
         currentSeekHex: String,
         onProgress: (ConsoleEntry) -> Unit
     ): InteractiveCommandOutcome {
-        val sessResult = ensurePersistentSession(sessionId, targetFile)
+        val sessResult = ensurePersistentSession(context, sessionId, targetFile)
         val sess = sessResult.getOrElse { err ->
             return InteractiveCommandOutcome(
                 entry = ConsoleEntry(

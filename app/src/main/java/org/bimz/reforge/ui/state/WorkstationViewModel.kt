@@ -699,6 +699,7 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             updateTerminalSession(sid) { it.copy(isRunning = true) }
             val outcome = sessionCommandRunner.executeInteractive(
+                context = context,
                 rawInput = rawInput,
                 activeFile = _uiState.value.activeFile,
                 sessionId = sid,
