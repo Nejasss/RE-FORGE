@@ -102,7 +102,7 @@ class FileImportManager(
     }
 
     private fun sanitizeFileName(raw: String): String {
-        val base = raw.substringAfterLast('/').substringAfterLast('\')
+        val base = raw.substringAfterLast('/').substringAfterLast('\\')
         return base.replace(Regex("[^A-Za-z0-9._-]"), "_").ifBlank { "imported_file.bin" }
     }
 }
