@@ -13,6 +13,7 @@ class EngineRegistry(
     private val capstoneReportJson: String,
     private val radare2Bridge: Radare2Bridge
 ) {
+    private val prefs = context.getSharedPreferences("reforge_engine_prefs", Context.MODE_PRIVATE)
     private val disabledIds = mutableSetOf<String>()
     private val testResults = mutableMapOf<String, String>()
 
@@ -20,11 +21,18 @@ class EngineRegistry(
     val engines: StateFlow<List<EngineDescriptor>> = _engines.asStateFlow()
 
     init {
+        val savedDisabled = prefs.getStringSet("disabled_engine_ids", emptySet()).orEmpty()
+        disabledIds.addAll(savedDisabled)
         refresh()
     }
 
     fun setEngineEnabled(id: String, enabled: Boolean) {
-        if (enabled) disabledIds.remove(id) else disabledIds.add(id)
+        if (enabled) {
+            disabledIds.remove(id)
+        } else {
+            disabledIds.add(id)
+        }
+        prefs.edit().putStringSet("disabled_engine_ids", disabledIds.toSet()).apply()
         refresh()
     }
 
@@ -101,7 +109,7 @@ class EngineRegistry(
                 initialized = r2Available,
                 enabled = isEngineEnabled("radare2_core"),
                 estimatedBinarySizeBytes = r2File?.length() ?: 0L,
-                features = listOf("JSON Binary Info (ij)", "Function Analysis (aflj)", "Sections & Symbols (iSj/isj)", "Strings (izzj)", "Disassembly (pd)"),
+                features = listOf("Full Auto Analysis (aaa)", "Function Disassembly (afl/pdf)", "Binary Info (ij/iSj/isj)", "Strings (izz)", "Hex & Seek (px/s)"),
                 runtimeDependencies = listOf("jniLibs/arm64-v8a/libr2.so", "bionic libc"),
                 compatibilityReport = if (r2Available) {
                     "Bundled ARM64 executable found in nativeLibraryDir with W^X compliant execute permission."

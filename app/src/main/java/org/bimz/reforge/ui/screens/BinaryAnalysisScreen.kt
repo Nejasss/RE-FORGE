@@ -3,6 +3,7 @@ package org.bimz.reforge.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
@@ -24,6 +25,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
@@ -40,6 +42,24 @@ fun BinaryAnalysisScreen(
     state: WorkstationUiState,
     viewModel: WorkstationViewModel
 ) {
+    val elfEnabled = state.engines.firstOrNull { it.id == "native_elf_mmap" }?.enabled ?: true
+    val capstoneEnabled = state.engines.firstOrNull { it.id == "capstone_disasm" }?.enabled ?: true
+    val r2Enabled = state.engines.firstOrNull { it.id == "radare2_core" }?.enabled ?: true
+
+    if (!elfEnabled && !capstoneEnabled && !r2Enabled) {
+        LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+            item {
+                EmptyActionState(
+                    title = "All Binary Engines Disabled",
+                    reason = "Native ELF, Capstone, and Radare2 engines are OFF. Enable at least one in Engines.",
+                    actionLabel = "Open Engines",
+                    onAction = { viewModel.navigateTo(WorkstationDestination.ENGINES) }
+                )
+            }
+        }
+        return
+    }
+
     if (state.activeProject == null) {
         LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
             item {
@@ -54,12 +74,22 @@ fun BinaryAnalysisScreen(
         return
     }
 
-    var activeTab by remember { mutableIntStateOf(0) }
+    val availableTabs = buildList {
+        if (elfEnabled) {
+            add("ELF Overview")
+            add("Sections")
+            add("Symbols")
+            add("Strings")
+        }
+        if (capstoneEnabled) add("Disassembly")
+        if (r2Enabled) add("Radare2")
+    }
+
+    var activeTabName by remember(availableTabs) { mutableStateOf(availableTabs.first()) }
     var archInput by remember(state.disasmArch) { mutableStateOf(state.disasmArch) }
     var offsetInput by remember(state.disasmOffsetHex) { mutableStateOf(state.disasmOffsetHex) }
     var symbolSearch by remember { mutableStateOf("") }
-
-    val tabs = listOf("ELF Overview", "Sections", "Symbols", "Strings", "Disassembly", "Radare2")
+    var r2CustomCmd by remember { mutableStateOf("aaa; afl") }
 
     LazyColumn(
         modifier = Modifier
@@ -72,10 +102,10 @@ fun BinaryAnalysisScreen(
                 horizontalArrangement = Arrangement.spacedBy(6.dp),
                 verticalArrangement = Arrangement.spacedBy(6.dp)
             ) {
-                tabs.forEachIndexed { index, title ->
+                availableTabs.forEach { title ->
                     FilterChip(
-                        selected = activeTab == index,
-                        onClick = { activeTab = index },
+                        selected = activeTabName == title,
+                        onClick = { activeTabName = title },
                         label = { Text(title) },
                         modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
                     )
@@ -84,8 +114,8 @@ fun BinaryAnalysisScreen(
         }
 
         val elf = state.elfReport
-        when (activeTab) {
-            0 -> {
+        when (activeTabName) {
+            "ELF Overview" -> {
                 if (elf == null || !elf.valid) {
                     item {
                         EmptyActionState(
@@ -123,7 +153,7 @@ fun BinaryAnalysisScreen(
                 }
             }
 
-            1 -> {
+            "Sections" -> {
                 val sections = elf?.sections.orEmpty()
                 if (sections.isEmpty()) {
                     item {
@@ -140,23 +170,25 @@ fun BinaryAnalysisScreen(
                             title = sec.name.ifBlank { "<unnamed>" },
                             subtitle = "offset=0x${sec.fileOffset.toString(16)} | size=${sec.size} bytes | vaddr=0x${sec.virtualAddress.toString(16)}"
                         ) {
-                            OutlinedButton(
-                                onClick = {
-                                    offsetInput = sec.fileOffset.toString(16)
-                                    activeTab = 4
-                                    viewModel.runCapstoneDisassembly(archInput, offsetInput)
-                                },
-                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text("Disassemble Section")
+                            if (capstoneEnabled) {
+                                OutlinedButton(
+                                    onClick = {
+                                        offsetInput = sec.fileOffset.toString(16)
+                                        activeTabName = "Disassembly"
+                                        viewModel.runCapstoneDisassembly(archInput, offsetInput)
+                                    },
+                                    modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                                    shape = RoundedCornerShape(6.dp)
+                                ) {
+                                    Text("Disassemble Section")
+                                }
                             }
                         }
                     }
                 }
             }
 
-            2 -> {
+            "Symbols" -> {
                 item {
                     OutlinedTextField(
                         value = symbolSearch,
@@ -177,7 +209,7 @@ fun BinaryAnalysisScreen(
                 }
             }
 
-            3 -> {
+            "Strings" -> {
                 val strings = elf?.strings.orEmpty().take(250)
                 items(strings) { strItem ->
                     WorkstationCard(
@@ -187,7 +219,7 @@ fun BinaryAnalysisScreen(
                 }
             }
 
-            4 -> {
+            "Disassembly" -> {
                 item {
                     WorkstationCard(
                         title = "Capstone Native Disassembler",
@@ -233,23 +265,47 @@ fun BinaryAnalysisScreen(
                 }
             }
 
-            5 -> {
+            "Radare2" -> {
                 item {
                     WorkstationCard(
-                        title = "Radare2 ARM64 Analysis Bridge",
-                        subtitle = "Executes non-interactive allowlisted Radare2 queries"
+                        title = "Radare2 ARM64 Analysis Console",
+                        subtitle = "All Radare2 commands unlocked (aaa, afl, pdf, ij, iSj, isj, izz, px)"
                     ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = r2CustomCmd,
+                                onValueChange = { r2CustomCmd = it },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("r2 command") },
+                                singleLine = true
+                            )
+                            Button(
+                                onClick = { viewModel.runRadare2Query(r2CustomCmd) },
+                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text("Exec")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
                         FlowRow(
                             horizontalArrangement = Arrangement.spacedBy(8.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
-                            listOf("ij", "iSj", "isj", "iij", "aflj", "pd 32").forEach { q ->
+                            listOf("aaa; afl", "ij", "iSj", "isj", "iij", "izz", "pd 32").forEach { q ->
                                 OutlinedButton(
-                                    onClick = { viewModel.runRadare2Query(q) },
+                                    onClick = {
+                                        r2CustomCmd = q
+                                        viewModel.runRadare2Query(q)
+                                    },
                                     modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
                                     shape = RoundedCornerShape(6.dp)
                                 ) {
-                                    Text("r2 $q")
+                                    Text(q)
                                 }
                             }
                         }

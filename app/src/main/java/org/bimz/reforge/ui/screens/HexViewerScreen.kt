@@ -39,6 +39,21 @@ fun HexViewerScreen(
     state: WorkstationUiState,
     viewModel: WorkstationViewModel
 ) {
+    val nativeEnabled = state.engines.firstOrNull { it.id == "native_elf_mmap" }?.enabled ?: true
+    if (!nativeEnabled) {
+        LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+            item {
+                EmptyActionState(
+                    title = "Native Mmap Hex Engine Disabled",
+                    reason = "Native ELF64/32, Mmap Hex & SHA-256 Engine is OFF. Turn it ON in Engines to restore Hex UI.",
+                    actionLabel = "Open Engines",
+                    onAction = { viewModel.navigateTo(WorkstationDestination.ENGINES) }
+                )
+            }
+        }
+        return
+    }
+
     val project = state.activeProject
     if (project == null) {
         LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {

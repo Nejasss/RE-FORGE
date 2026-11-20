@@ -1,5 +1,15 @@
 package org.bimz.reforge.ui.navigation
 
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -32,7 +42,10 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
+import org.bimz.reforge.engines.EngineStatus
+import org.bimz.reforge.ui.components.BadgeTone
 import org.bimz.reforge.ui.components.ErrorActionState
+import org.bimz.reforge.ui.components.StatusPill
 import org.bimz.reforge.ui.screens.ApkInspectorScreen
 import org.bimz.reforge.ui.screens.BinaryAnalysisScreen
 import org.bimz.reforge.ui.screens.DexViewerScreen
@@ -65,6 +78,10 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
         WorkstationDestination.SETTINGS
     )
 
+    val activeEngineCount = state.engines.count {
+        it.enabled && (it.status == EngineStatus.INTEGRATED || it.status == EngineStatus.PARTIALLY_INTEGRATED)
+    }
+
     Scaffold(
         topBar = {
             Column {
@@ -79,6 +96,14 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                                 text = state.activeProject?.originalFileName ?: "ARM64 Workstation",
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    },
+                    actions = {
+                        Box(modifier = Modifier.padding(end = 12.dp)) {
+                            StatusPill(
+                                label = "$activeEngineCount/${state.engines.size} ON",
+                                tone = if (activeEngineCount > 0) BadgeTone.PASS else BadgeTone.NEUTRAL
                             )
                         }
                     }
@@ -99,14 +124,23 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                         )
                     }
                 }
-                if (state.isBusy) {
-                    LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                    Surface(color = MaterialTheme.colorScheme.surfaceVariant, modifier = Modifier.fillMaxWidth()) {
-                        Text(
-                            text = state.busyMessage,
-                            style = MaterialTheme.typography.bodySmall,
-                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
-                        )
+                AnimatedVisibility(
+                    visible = state.isBusy,
+                    enter = expandVertically(tween(180)) + fadeIn(tween(180)),
+                    exit = shrinkVertically(tween(160)) + fadeOut(tween(140))
+                ) {
+                    Column {
+                        LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
+                        Surface(
+                            color = MaterialTheme.colorScheme.surfaceVariant,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            Text(
+                                text = state.busyMessage,
+                                style = MaterialTheme.typography.bodySmall,
+                                modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
+                            )
+                        }
                     }
                 }
             }
@@ -130,7 +164,11 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                 .padding(innerPadding)
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                if (state.errorMessage != null) {
+                AnimatedVisibility(
+                    visible = state.errorMessage != null,
+                    enter = expandVertically(tween(200)) + fadeIn(tween(200)),
+                    exit = shrinkVertically(tween(160)) + fadeOut(tween(140))
+                ) {
                     Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
                         ErrorActionState(
                             title = "Operation Error",
@@ -140,16 +178,31 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                         )
                     }
                 }
-                when (state.currentRoute) {
-                    WorkstationDestination.HOME -> HomeScreen(state, viewModel)
-                    WorkstationDestination.WORKSPACE -> WorkspaceScreen(state, viewModel)
-                    WorkstationDestination.APK -> ApkInspectorScreen(state, viewModel)
-                    WorkstationDestination.DEX -> DexViewerScreen(state, viewModel)
-                    WorkstationDestination.BINARY -> BinaryAnalysisScreen(state, viewModel)
-                    WorkstationDestination.HEX -> HexViewerScreen(state, viewModel)
-                    WorkstationDestination.TOOLS -> ToolsScreen(state, viewModel)
-                    WorkstationDestination.ENGINES -> EnginesScreen(state, viewModel)
-                    WorkstationDestination.SETTINGS -> SettingsScreen(state, viewModel)
+
+                AnimatedContent(
+                    targetState = state.currentRoute,
+                    transitionSpec = {
+                        val forward = targetState.ordinal >= initialState.ordinal
+                        val offsetSign = if (forward) 1 else -1
+                        (fadeIn(tween(200)) + slideInHorizontally(tween(220)) { offsetSign * (it / 14) })
+                            .togetherWith(
+                                fadeOut(tween(150)) + slideOutHorizontally(tween(180)) { -offsetSign * (it / 14) }
+                            )
+                    },
+                    label = "route_transition",
+                    modifier = Modifier.fillMaxSize()
+                ) { route ->
+                    when (route) {
+                        WorkstationDestination.HOME -> HomeScreen(state, viewModel)
+                        WorkstationDestination.WORKSPACE -> WorkspaceScreen(state, viewModel)
+                        WorkstationDestination.APK -> ApkInspectorScreen(state, viewModel)
+                        WorkstationDestination.DEX -> DexViewerScreen(state, viewModel)
+                        WorkstationDestination.BINARY -> BinaryAnalysisScreen(state, viewModel)
+                        WorkstationDestination.HEX -> HexViewerScreen(state, viewModel)
+                        WorkstationDestination.TOOLS -> ToolsScreen(state, viewModel)
+                        WorkstationDestination.ENGINES -> EnginesScreen(state, viewModel)
+                        WorkstationDestination.SETTINGS -> SettingsScreen(state, viewModel)
+                    }
                 }
             }
         }

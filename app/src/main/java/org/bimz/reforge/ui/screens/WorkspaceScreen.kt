@@ -11,7 +11,6 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.OutlinedButton
@@ -45,6 +44,7 @@ fun WorkspaceScreen(
     viewModel: WorkstationViewModel
 ) {
     val context = LocalContext.current
+    val apksigEnabled = state.engines.firstOrNull { it.id == "apksig_signer" }?.enabled ?: true
     val project = state.activeProject
     if (project == null) {
         LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
@@ -84,94 +84,96 @@ fun WorkspaceScreen(
             }
         }
 
-        item {
-            WorkstationCard(
-                title = "Build, Sign & Verify Pipeline",
-                subtitle = "Authorized local APK packaging with 16KB native .so alignment and apksig v1/v2/v3"
-            ) {
-                FlowRow(
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalArrangement = Arrangement.spacedBy(8.dp)
+        if (apksigEnabled) {
+            item {
+                WorkstationCard(
+                    title = "Build, Sign & Verify Pipeline",
+                    subtitle = "Authorized local APK packaging with 16KB native .so alignment and apksig v1/v2/v3"
                 ) {
-                    Button(
-                        onClick = { viewModel.rebuildActiveApk() },
-                        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                        shape = RoundedCornerShape(6.dp)
+                    FlowRow(
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
-                        Text("Rebuild APK")
-                    }
-                    Button(
-                        onClick = { viewModel.signRebuiltOrWorkingApk() },
-                        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                        shape = RoundedCornerShape(6.dp)
-                    ) {
-                        Text("Sign & Verify APK")
-                    }
-                    val signedPath = state.signingResult?.signedApkPath
-                    if (signedPath != null && File(signedPath).exists()) {
-                        OutlinedButton(
-                            onClick = {
-                                val file = File(signedPath)
-                                val uri = FileProvider.getUriForFile(
-                                    context,
-                                    "${context.packageName}.fileprovider",
-                                    file
-                                )
-                                val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                    type = "application/vnd.android.package-archive"
-                                    putExtra(Intent.EXTRA_STREAM, uri)
-                                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                }
-                                context.startActivity(Intent.createChooser(shareIntent, "Export Signed APK"))
-                            },
+                        Button(
+                            onClick = { viewModel.rebuildActiveApk() },
                             modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
                             shape = RoundedCornerShape(6.dp)
                         ) {
-                            Text("Export Signed APK")
+                            Text("Rebuild APK")
+                        }
+                        Button(
+                            onClick = { viewModel.signRebuiltOrWorkingApk() },
+                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                            shape = RoundedCornerShape(6.dp)
+                        ) {
+                            Text("Sign & Verify APK")
+                        }
+                        val signedPath = state.signingResult?.signedApkPath
+                        if (signedPath != null && File(signedPath).exists()) {
+                            OutlinedButton(
+                                onClick = {
+                                    val file = File(signedPath)
+                                    val uri = FileProvider.getUriForFile(
+                                        context,
+                                        "${context.packageName}.fileprovider",
+                                        file
+                                    )
+                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
+                                        type = "application/vnd.android.package-archive"
+                                        putExtra(Intent.EXTRA_STREAM, uri)
+                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                                    }
+                                    context.startActivity(Intent.createChooser(shareIntent, "Export Signed APK"))
+                                },
+                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                                shape = RoundedCornerShape(6.dp)
+                            ) {
+                                Text("Export Signed APK")
+                            }
                         }
                     }
-                }
 
-                state.rebuildResult?.let { res ->
-                    Spacer(modifier = Modifier.height(10.dp))
-                    StatusPill(
-                        label = "Rebuild: ${res.status} (${res.changedFileCount} changes)",
-                        tone = if (res.outputApkPath != null) BadgeTone.PASS else BadgeTone.FAILED
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = res.buildLog,
-                        style = androidx.compose.material3.MaterialTheme.typography.labelSmall
-                    )
-                }
-
-                state.signingResult?.let { sig ->
-                    Spacer(modifier = Modifier.height(10.dp))
-                    StatusPill(
-                        label = if (sig.success) "Signed: ${sig.signerAlias}" else "Signing Failed",
-                        tone = if (sig.success) BadgeTone.PASS else BadgeTone.FAILED
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
-                    Text(text = sig.message, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
-                    Text(
-                        text = sig.updateIdentityWarning,
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                        color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-
-                state.verificationReport?.let { ver ->
-                    Spacer(modifier = Modifier.height(10.dp))
-                    val tone = when (ver.overallStatus) {
-                        CheckStatus.PASS -> BadgeTone.PASS
-                        CheckStatus.WARNING -> BadgeTone.WARNING
-                        CheckStatus.FAILED -> BadgeTone.FAILED
-                        CheckStatus.NOT_TESTED -> BadgeTone.NEUTRAL
+                    state.rebuildResult?.let { res ->
+                        Spacer(modifier = Modifier.height(10.dp))
+                        StatusPill(
+                            label = "Rebuild: ${res.status} (${res.changedFileCount} changes)",
+                            tone = if (res.outputApkPath != null) BadgeTone.PASS else BadgeTone.FAILED
+                        )
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Text(
+                            text = res.buildLog,
+                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall
+                        )
                     }
-                    StatusPill(label = "Post-Build Verification: ${ver.overallStatus}", tone = tone)
-                    Spacer(modifier = Modifier.height(6.dp))
-                    ver.items.forEach { item ->
-                        KeyValueRow(item.checkName, "[${item.status}] ${item.detail}", monospaceValue = true)
+
+                    state.signingResult?.let { sig ->
+                        Spacer(modifier = Modifier.height(10.dp))
+                        StatusPill(
+                            label = if (sig.success) "Signed: ${sig.signerAlias}" else "Signing Failed",
+                            tone = if (sig.success) BadgeTone.PASS else BadgeTone.FAILED
+                        )
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text(text = sig.message, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
+                        Text(
+                            text = sig.updateIdentityWarning,
+                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
+                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+
+                    state.verificationReport?.let { ver ->
+                        Spacer(modifier = Modifier.height(10.dp))
+                        val tone = when (ver.overallStatus) {
+                            CheckStatus.PASS -> BadgeTone.PASS
+                            CheckStatus.WARNING -> BadgeTone.WARNING
+                            CheckStatus.FAILED -> BadgeTone.FAILED
+                            CheckStatus.NOT_TESTED -> BadgeTone.NEUTRAL
+                        }
+                        StatusPill(label = "Post-Build Verification: ${ver.overallStatus}", tone = tone)
+                        Spacer(modifier = Modifier.height(6.dp))
+                        ver.items.forEach { item ->
+                            KeyValueRow(item.checkName, "[${item.status}] ${item.detail}", monospaceValue = true)
+                        }
                     }
                 }
             }

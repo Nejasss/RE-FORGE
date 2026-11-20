@@ -15,10 +15,6 @@ data class Radare2ExecutionResult(
 
 class Radare2Bridge(private val context: Context) {
 
-    private val allowedCommands = setOf(
-        "ij", "iIj", "iSj", "isj", "iij", "iEj", "izzj", "aflj", "pd 32", "pd 64", "px 128", "px 256", "?V"
-    )
-
     fun resolveBinary(): File? {
         val nativeDir = File(context.applicationInfo.nativeLibraryDir)
         val candidate = File(nativeDir, "libr2.so")
@@ -37,6 +33,9 @@ class Radare2Bridge(private val context: Context) {
     }
 
     suspend fun executeSafeQuery(targetFile: File?, command: String): Radare2ExecutionResult =
+        executeCommand(targetFile, command)
+
+    suspend fun executeCommand(targetFile: File?, command: String): Radare2ExecutionResult =
         withContext(Dispatchers.IO) {
             val bin = resolveBinary()
                 ?: return@withContext Radare2ExecutionResult(
@@ -47,13 +46,12 @@ class Radare2Bridge(private val context: Context) {
                 )
 
             val trimmed = command.trim()
-            val validPrefix = allowedCommands.any { trimmed == it || trimmed.startsWith("$it @ ") }
-            if (!validPrefix) {
+            if (trimmed.isEmpty()) {
                 return@withContext Radare2ExecutionResult(
                     success = false,
                     exitCode = -2,
                     stdout = "",
-                    stderr = "Rejected non-allowlisted r2 command. Permitted: ${allowedCommands.joinToString(", ")}"
+                    stderr = "Empty Radare2 command."
                 )
             }
 
@@ -66,7 +64,13 @@ class Radare2Bridge(private val context: Context) {
                 )
             }
 
-            val argv = mutableListOf("-q", "-e", "scr.color=0", "-e", "bin.relocs.apply=true", "-c", trimmed)
+            val argv = mutableListOf(
+                "-q",
+                "-e", "scr.color=0",
+                "-e", "scr.interactive=false",
+                "-e", "bin.relocs.apply=true",
+                "-c", trimmed
+            )
             if (targetFile != null) {
                 argv.add(targetFile.absolutePath)
             } else {
@@ -83,10 +87,10 @@ class Radare2Bridge(private val context: Context) {
             pb.environment()["HOME"] = context.filesDir.absolutePath
             pb.environment()["TMPDIR"] = context.cacheDir.absolutePath
             val process = pb.start()
-            val finished = process.waitFor(20, TimeUnit.SECONDS)
+            val finished = process.waitFor(60, TimeUnit.SECONDS)
             if (!finished) {
                 process.destroyForcibly()
-                return Radare2ExecutionResult(false, -4, "", "Radare2 analysis timed out after 20 seconds")
+                return Radare2ExecutionResult(false, -4, "", "Radare2 analysis timed out after 60 seconds")
             }
             val out = process.inputStream.bufferedReader().use { it.readText() }
             val err = process.errorStream.bufferedReader().use { it.readText() }

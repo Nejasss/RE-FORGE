@@ -42,6 +42,23 @@ fun DexViewerScreen(
     state: WorkstationUiState,
     viewModel: WorkstationViewModel
 ) {
+    val smaliEnabled = state.engines.firstOrNull { it.id == "smali_dexlib2" }?.enabled ?: true
+    val jadxEnabled = state.engines.firstOrNull { it.id == "jadx_core" }?.enabled ?: true
+
+    if (!smaliEnabled) {
+        LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+            item {
+                EmptyActionState(
+                    title = "Smali / dexlib2 Engine Disabled",
+                    reason = "Google Smali / Baksmali & dexlib2 is turned OFF. Turn it ON in Engines to restore DEX inspection.",
+                    actionLabel = "Open Engines",
+                    onAction = { viewModel.navigateTo(WorkstationDestination.ENGINES) }
+                )
+            }
+        }
+        return
+    }
+
     if (state.activeProject == null) {
         LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
             item {
@@ -71,7 +88,7 @@ fun DexViewerScreen(
     }
 
     var classFilter by remember { mutableStateOf("") }
-    var codeTab by remember { mutableIntStateOf(0) } // 0 = Smali Editor, 1 = Diff, 2 = JADX Java
+    var codeTab by remember { mutableIntStateOf(0) }
 
     LazyColumn(
         modifier = Modifier
@@ -116,17 +133,19 @@ fun DexViewerScreen(
                             label = { Text("Smali Diff") },
                             modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
                         )
-                        FilterChip(
-                            selected = codeTab == 2,
-                            onClick = {
-                                codeTab = 2
-                                if (state.decompiledJavaText.isBlank()) {
-                                    viewModel.decompileSelectedClassWithJadx()
-                                }
-                            },
-                            label = { Text("JADX Java") },
-                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
-                        )
+                        if (jadxEnabled) {
+                            FilterChip(
+                                selected = codeTab == 2,
+                                onClick = {
+                                    codeTab = 2
+                                    if (state.decompiledJavaText.isBlank()) {
+                                        viewModel.decompileSelectedClassWithJadx()
+                                    }
+                                },
+                                label = { Text("JADX Java") },
+                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp)
+                            )
+                        }
                         OutlinedButton(
                             onClick = { viewModel.saveStagedSmaliEdit() },
                             modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
@@ -155,29 +174,36 @@ fun DexViewerScreen(
                             )
                         }
                         2 -> {
-                            if (state.decompilerDisclaimer.isNotBlank()) {
-                                StatusPill(label = "Bytecode Approximation (JADX)", tone = BadgeTone.WARNING)
-                                Spacer(modifier = Modifier.height(4.dp))
+                            if (!jadxEnabled) {
                                 Text(
-                                    text = state.decompilerDisclaimer,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    text = "JADX Core engine is OFF.",
+                                    style = MaterialTheme.typography.bodySmall
                                 )
-                                Spacer(modifier = Modifier.height(8.dp))
-                            }
-                            if (state.decompiledJavaText.isBlank()) {
-                                Button(
-                                    onClick = { viewModel.decompileSelectedClassWithJadx() },
-                                    modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                                    shape = RoundedCornerShape(6.dp)
-                                ) {
-                                    Text("Decompile Selected Class")
-                                }
                             } else {
-                                Text(
-                                    text = state.decompiledJavaText,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace)
-                                )
+                                if (state.decompilerDisclaimer.isNotBlank()) {
+                                    StatusPill(label = "Bytecode Approximation (JADX)", tone = BadgeTone.WARNING)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(
+                                        text = state.decompilerDisclaimer,
+                                        style = MaterialTheme.typography.bodySmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                    Spacer(modifier = Modifier.height(8.dp))
+                                }
+                                if (state.decompiledJavaText.isBlank()) {
+                                    Button(
+                                        onClick = { viewModel.decompileSelectedClassWithJadx() },
+                                        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                                        shape = RoundedCornerShape(6.dp)
+                                    ) {
+                                        Text("Decompile Selected Class")
+                                    }
+                                } else {
+                                    Text(
+                                        text = state.decompiledJavaText,
+                                        style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace)
+                                    )
+                                }
                             }
                         }
                     }

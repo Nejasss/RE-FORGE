@@ -1,5 +1,8 @@
 package org.bimz.reforge.ui.components
 
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Spring
+import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -41,8 +44,15 @@ fun WorkstationCard(
     content: @Composable ColumnScope.() -> Unit
 ) {
     Surface(
-        modifier = modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(8.dp),
+        modifier = modifier
+            .fillMaxWidth()
+            .animateContentSize(
+                animationSpec = spring(
+                    dampingRatio = Spring.DampingRatioNoBouncy,
+                    stiffness = Spring.StiffnessMediumLow
+                )
+            ),
+        shape = RoundedCornerShape(10.dp),
         color = MaterialTheme.colorScheme.surface,
         border = BorderStroke(1.dp, MaterialTheme.colorScheme.outline)
     ) {
@@ -89,7 +99,7 @@ fun StatusPill(label: String, tone: BadgeTone) {
         )
     }
     Surface(
-        shape = RoundedCornerShape(4.dp),
+        shape = RoundedCornerShape(6.dp),
         color = bg
     ) {
         Row(
