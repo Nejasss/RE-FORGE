@@ -144,6 +144,7 @@ fun ToolsScreen(
         ?: state.terminalSessions.firstOrNull()
         ?: TerminalSessionState("session-1", "Session 1", state.consoleHistory)
     val isR2Mode = activeSession.r2Mode
+    val sessionTarget = activeSession.targetFile ?: state.activeFile
     val listState = rememberLazyListState()
     val context = LocalContext.current
 

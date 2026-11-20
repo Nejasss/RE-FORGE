@@ -12,6 +12,7 @@ import java.io.OutputStreamWriter
 import java.io.RandomAccessFile
 import java.security.MessageDigest
 import java.util.Locale
+import java.util.concurrent.CancellationException
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.LinkedBlockingQueue
 import java.util.concurrent.TimeUnit
@@ -22,7 +23,8 @@ data class InteractiveCommandOutcome(
     val nextR2Mode: Boolean,
     val nextSeekHex: String,
     val requestSaveDump: Boolean = false,
-    val createdDumpFile: SavedForgeFile? = null
+    val createdDumpFile: SavedForgeFile? = null,
+    val updatedTargetFile: File? = null
 )
 
 class ConsoleCommandRunner {
@@ -37,8 +39,18 @@ class ConsoleCommandRunner {
 
     private val sessions = ConcurrentHashMap<String, PersistentR2Session>()
     private val activeProcesses = ConcurrentHashMap<String, Process>()
+    private val cancelledSessions = ConcurrentHashMap.newKeySet<String>()
+
+    private fun formatTargetSize(bytes: Long): String {
+        return when {
+            bytes < 1024L -> "$bytes B"
+            bytes < 1024L * 1024L -> String.format(Locale.US, "%.2f KB", bytes / 1024.0)
+            else -> String.format(Locale.US, "%.2f MB", bytes / (1024.0 * 1024.0))
+        }
+    }
 
     fun closeSession(sessionId: String) {
+        cancelledSessions.add(sessionId)
         activeProcesses.remove(sessionId)?.let { proc ->
             runCatching { proc.destroyForcibly() }
         }
@@ -53,6 +65,7 @@ class ConsoleCommandRunner {
     }
 
     fun stopSession(sessionId: String) {
+        cancelledSessions.add(sessionId)
         activeProcesses.remove(sessionId)?.let { proc ->
             runCatching { proc.destroyForcibly() }
         }
@@ -66,11 +79,13 @@ class ConsoleCommandRunner {
         context: Context,
         rawInput: String,
         activeFile: File?,
+        availableTargets: List<File> = emptyList(),
         sessionId: String,
         currentR2Mode: Boolean,
         currentSeekHex: String,
         onProgress: (ConsoleEntry) -> Unit
     ): InteractiveCommandOutcome {
+        cancelledSessions.remove(sessionId)
         val trimmed = rawInput.trim()
         if (trimmed.isEmpty()) {
             return InteractiveCommandOutcome(
@@ -80,12 +95,100 @@ class ConsoleCommandRunner {
             )
         }
 
+        if (
+            trimmed.equals("target", ignoreCase = true) ||
+            trimmed.equals("targets", ignoreCase = true) ||
+            trimmed.startsWith("target ", ignoreCase = true)
+        ) {
+            val arg = trimmed.substringAfter(" ", missingDelimiterValue = "").trim()
+            val uniqueFiles = LinkedHashMap<String, File>()
+            if (activeFile != null && activeFile.exists()) {
+                uniqueFiles[activeFile.absolutePath] = activeFile
+            }
+            availableTargets.filter { it.exists() }.forEach { f ->
+                uniqueFiles.putIfAbsent(f.absolutePath, f)
+            }
+            val candidates = uniqueFiles.values.toList()
+            if (candidates.isEmpty()) {
+                return InteractiveCommandOutcome(
+                    entry = ConsoleEntry(
+                        command = trimmed,
+                        output = "[target] No binaries imported yet. Import a binary from Home or Vault first.",
+                        isError = true,
+                        isR2Command = currentR2Mode
+                    ),
+                    nextR2Mode = currentR2Mode,
+                    nextSeekHex = currentSeekHex
+                )
+            }
+            if (arg.isEmpty()) {
+                val listText = buildString {
+                    appendLine("Available Binaries (${candidates.size}):")
+                    candidates.forEachIndexed { idx, f ->
+                        val activeTag = if (f.absolutePath == activeFile?.absolutePath) " [ACTIVE]" else ""
+                        val sha = runCatching { ForgeDumpGenerator.sha256File(f) }.getOrNull()
+                        val cacheTag = if (sha != null && ForgeDumpGenerator.isAaaCached(context, sha)) " [aaa-cached]" else ""
+                        appendLine("  [${idx + 1}] ${f.name} (${formatTargetSize(f.length())})$activeTag$cacheTag")
+                    }
+                    append("Usage: target <number|name>  (e.g. target 1)")
+                }
+                return InteractiveCommandOutcome(
+                    entry = ConsoleEntry(
+                        command = trimmed,
+                        output = listText,
+                        isError = false,
+                        isR2Command = currentR2Mode
+                    ),
+                    nextR2Mode = currentR2Mode,
+                    nextSeekHex = currentSeekHex
+                )
+            }
+
+            val chosen = arg.toIntOrNull()?.let { idx -> candidates.getOrNull(idx - 1) }
+                ?: candidates.firstOrNull { it.name.equals(arg, ignoreCase = true) }
+                ?: candidates.firstOrNull { it.name.contains(arg, ignoreCase = true) }
+
+            if (chosen == null) {
+                return InteractiveCommandOutcome(
+                    entry = ConsoleEntry(
+                        command = trimmed,
+                        output = "[target] Target '$arg' not found. Run 'target' to list available binaries.",
+                        isError = true,
+                        isR2Command = currentR2Mode
+                    ),
+                    nextR2Mode = currentR2Mode,
+                    nextSeekHex = currentSeekHex
+                )
+            }
+
+            if (currentR2Mode) {
+                closeSession(sessionId)
+            }
+            val sha = runCatching { ForgeDumpGenerator.sha256File(chosen) }.getOrNull()
+            val cachedNote = if (sha != null && ForgeDumpGenerator.isAaaCached(context, sha)) {
+                " (aaa analysis cached)"
+            } else {
+                ""
+            }
+            return InteractiveCommandOutcome(
+                entry = ConsoleEntry(
+                    command = trimmed,
+                    output = "[target] Switched active target to ${chosen.name} (${formatTargetSize(chosen.length())})$cachedNote.",
+                    isError = false,
+                    isR2Command = false
+                ),
+                nextR2Mode = false,
+                nextSeekHex = "0x00000000",
+                updatedTargetFile = chosen
+            )
+        }
+
         if (trimmed.equals("dump", ignoreCase = true) || trimmed.startsWith("dump ", ignoreCase = true)) {
             if (activeFile == null || !activeFile.exists()) {
                 return InteractiveCommandOutcome(
                     entry = ConsoleEntry(
                         command = trimmed,
-                        output = "[dump] Select a binary or file first before dumping.",
+                        output = "[dump] Select a binary first ('target' or import from Home).",
                         isError = true,
                         isR2Command = currentR2Mode
                     ),
@@ -98,24 +201,34 @@ class ConsoleCommandRunner {
                 ?: return InteractiveCommandOutcome(
                     entry = ConsoleEntry(
                         command = trimmed,
-                        output = "Usage: dump [full|exports|imports|functions|strings|sections] [txt|md|json]",
+                        output = "Usage: dump [full|exports|imports|functions|strings|sections] [txt|md|json] [force]",
                         isError = true,
                         isR2Command = currentR2Mode
                     ),
                     nextR2Mode = currentR2Mode,
                     nextSeekHex = currentSeekHex
                 )
-            val (mode, fmt) = parsed
             val baseEntry = ConsoleEntry(
                 command = trimmed,
-                output = "[dump] Initializing r2dump (${mode.label} • ${fmt.ext.uppercase(Locale.US)})...",
+                output = "[dump] Initializing r2dump (${parsed.mode.label} • ${parsed.format.ext.uppercase(Locale.US)})...",
                 isError = false,
                 isRunning = true,
                 isR2Command = currentR2Mode
             )
             onProgress(baseEntry)
-            val res = ForgeDumpGenerator.runDump(context, activeFile, mode, fmt) { statusMsg ->
-                onProgress(baseEntry.copy(output = statusMsg, isRunning = true))
+            val res = ForgeDumpGenerator.runDump(
+                context = context,
+                targetFile = activeFile,
+                mode = parsed.mode,
+                format = parsed.format,
+                force = parsed.force,
+                isCancelled = { cancelledSessions.contains(sessionId) },
+                onProcessStarted = { proc -> activeProcesses[sessionId] = proc },
+                onProcessFinished = { activeProcesses.remove(sessionId) }
+            ) { statusMsg ->
+                if (!cancelledSessions.contains(sessionId)) {
+                    onProgress(baseEntry.copy(output = statusMsg, isRunning = true))
+                }
             }
             return res.fold(
                 onSuccess = { (savedFile, summary) ->
@@ -127,10 +240,11 @@ class ConsoleCommandRunner {
                     )
                 },
                 onFailure = { err ->
+                    val stopped = err is CancellationException || cancelledSessions.contains(sessionId)
                     InteractiveCommandOutcome(
                         entry = baseEntry.copy(
-                            output = "[dump error] ${err.message ?: "Failed to dump binary"}",
-                            isError = true,
+                            output = if (stopped) "[dump] Stopped by user." else "[dump error] ${err.message ?: "Failed to dump binary"}",
+                            isError = !stopped,
                             isRunning = false
                         ),
                         nextR2Mode = currentR2Mode,
@@ -428,12 +542,27 @@ class ConsoleCommandRunner {
         var aborted = false
 
         try {
+            val isPureAaa = r2Command.trim().equals("aaa", ignoreCase = true)
+            val targetSha = if (isPureAaa) {
+                runCatching { ForgeDumpGenerator.sha256File(targetFile) }.getOrNull()
+            } else {
+                null
+            }
+            val useCachedAaa = isPureAaa && targetSha != null && ForgeDumpGenerator.isAaaCached(context, targetSha)
+            val effectiveR2Cmd = when {
+                useCachedAaa && targetSha != null -> "Po ${ForgeDumpGenerator.r2ProjectKey(targetSha)}"
+                isPureAaa && targetSha != null -> "aaa; Ps ${ForgeDumpGenerator.r2ProjectKey(targetSha)}"
+                else -> r2Command
+            }
             synchronized(sess.writer) {
-                sess.writer.write(r2Command)
+                sess.writer.write(effectiveR2Cmd)
                 sess.writer.newLine()
                 sess.writer.write("?e $marker")
                 sess.writer.newLine()
                 sess.writer.flush()
+            }
+            if (isPureAaa && targetSha != null && !useCachedAaa) {
+                ForgeDumpGenerator.markAaaCached(context, targetSha)
             }
 
             var lastUiPush = System.currentTimeMillis()
@@ -510,6 +639,7 @@ class ConsoleCommandRunner {
 
         val finalOutput = when {
             collected.isNotEmpty() -> collected.toString()
+            !aborted && r2Command.trim().equals("aaa", ignoreCase = true) -> "[r2 cache] Analysis ready for ${targetFile.name}."
             aborted -> "[r2] Session stopped or terminated."
             else -> "(no output)"
         }

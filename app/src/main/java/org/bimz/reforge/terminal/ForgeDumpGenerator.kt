@@ -10,6 +10,7 @@ import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.security.MessageDigest
+import java.util.concurrent.CancellationException
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -90,9 +91,16 @@ object ForgeDumpGenerator {
  ╚═╝  ╚═╝╚══════╝╚═════╝  ╚═════╝ ╚═╝     ╚═╝╚═╝
 """.trimIndent()
 
-    fun parseArgs(rawArg: String): Pair<DumpMode, DumpFormat>? {
+    data class ParsedDumpArgs(
+        val mode: DumpMode,
+        val format: DumpFormat,
+        val force: Boolean
+    )
+
+    fun parseArgs(rawArg: String): ParsedDumpArgs? {
         var mode = DumpMode.FULL
         var format = DumpFormat.TXT
+        var force = false
         val tokens = rawArg.trim().split(Regex("\\s+")).filter { it.isNotEmpty() }
         for (tok in tokens) {
             val m = DumpMode.fromToken(tok)
@@ -100,10 +108,72 @@ object ForgeDumpGenerator {
             when {
                 m != null -> mode = m
                 f != null -> format = f
+                tok.equals("force", ignoreCase = true) || tok == "-f" || tok == "--force" -> force = true
                 else -> return null
             }
         }
-        return mode to format
+        return ParsedDumpArgs(mode, format, force)
+    }
+
+    fun sha256File(file: File): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buf = ByteArray(64 * 1024)
+            while (true) {
+                val n = input.read(buf)
+                if (n <= 0) break
+                md.update(buf, 0, n)
+            }
+        }
+        return md.digest().joinToString("") { "%02x".format(it) }
+    }
+
+    fun r2ProjectKey(sha256: String): String = "reforge_${sha256.take(16)}"
+
+    fun isAaaCached(context: Context, sha256: String): Boolean {
+        val marker = File(File(context.filesDir, "r2_aaa_cache"), "${sha256.take(24)}.ok")
+        return marker.exists()
+    }
+
+    fun markAaaCached(context: Context, sha256: String) {
+        val dir = File(context.filesDir, "r2_aaa_cache").apply { mkdirs() }
+        File(dir, "${sha256.take(24)}.ok").writeText("1", Charsets.UTF_8)
+    }
+
+    private fun findCachedDump(
+        context: Context,
+        sha256: String,
+        mode: DumpMode,
+        format: DumpFormat
+    ): SavedForgeFile? {
+        val sidecar = File(
+            File(context.filesDir, "r2_dump_cache"),
+            "${sha256.take(24)}_${mode.key}_${format.ext}.path"
+        )
+        if (!sidecar.exists()) return null
+        val path = runCatching { sidecar.readText(Charsets.UTF_8).trim() }.getOrNull().orEmpty()
+        if (path.isBlank()) return null
+        val f = File(path)
+        if (!f.exists() || f.length() == 0L) return null
+        return SavedForgeFile(
+            file = f,
+            name = f.name,
+            sizeBytes = f.length(),
+            lastModifiedMs = f.lastModified(),
+            isTextDump = true
+        )
+    }
+
+    private fun saveCachedDump(
+        context: Context,
+        sha256: String,
+        mode: DumpMode,
+        format: DumpFormat,
+        savedFile: File
+    ) {
+        val dir = File(context.filesDir, "r2_dump_cache").apply { mkdirs() }
+        File(dir, "${sha256.take(24)}_${mode.key}_${format.ext}.path")
+            .writeText(savedFile.absolutePath, Charsets.UTF_8)
     }
 
     fun runDump(
@@ -111,14 +181,56 @@ object ForgeDumpGenerator {
         targetFile: File,
         mode: DumpMode,
         format: DumpFormat,
+        force: Boolean = false,
+        isCancelled: () -> Boolean = { false },
+        onProcessStarted: (Process) -> Unit = {},
+        onProcessFinished: () -> Unit = {},
         onStatus: (String) -> Unit
     ): Result<Pair<SavedForgeFile, String>> = runCatching {
+        if (isCancelled()) throw CancellationException("Dump stopped by user.")
+
+        val sha256 = sha256File(targetFile)
+        if (!force) {
+            val cachedDump = findCachedDump(context, sha256, mode, format)
+            if (cachedDump != null) {
+                val summary = buildString {
+                    appendLine("✓ Reused cached dump from Download/RE FORGE/${cachedDump.name}")
+                    appendLine("  Target    : ${targetFile.name} (SHA-256: ${sha256.take(16)}...)")
+                    appendLine("  Mode      : ${mode.label} | Format: ${format.ext.uppercase(Locale.US)} (${humanSize(cachedDump.sizeBytes)})")
+                    append("  Hint      : Run 'dump ${mode.key} force' to regenerate from scratch")
+                }
+                return@runCatching cachedDump to summary
+            }
+        }
+
         val bridge = Radare2Bridge(context)
         val r2Bin = bridge.resolveBinary()
             ?: throw IllegalStateException("Radare2 binary not found.")
 
-        onStatus("[dump] Opening & analyzing ${targetFile.name} (aaa)...")
-        val data = collectBinaryData(context, r2Bin, targetFile, onStatus)
+        val hasCachedAaa = isAaaCached(context, sha256)
+        val projKey = r2ProjectKey(sha256)
+        if (hasCachedAaa) {
+            onStatus("[dump] Reusing cached aaa DB ($projKey) for ${targetFile.name}...")
+        } else {
+            onStatus("[dump] Opening & analyzing ${targetFile.name} (aaa)...")
+        }
+
+        val data = collectBinaryData(
+            context = context,
+            r2Bin = r2Bin,
+            targetFile = targetFile,
+            hasCachedAaa = hasCachedAaa,
+            projKey = projKey,
+            isCancelled = isCancelled,
+            onProcessStarted = onProcessStarted,
+            onProcessFinished = onProcessFinished,
+            onStatus = onStatus
+        )
+
+        if (isCancelled()) throw CancellationException("Dump stopped by user.")
+        if (!hasCachedAaa) {
+            markAaaCached(context, sha256)
+        }
 
         onStatus("[dump] Building ${mode.label} (${format.ext.uppercase(Locale.US)})...")
         val meta = buildMeta(targetFile, data)
@@ -128,10 +240,13 @@ object ForgeDumpGenerator {
             DumpFormat.TXT -> buildHeader(meta, mode, format) + buildTxtContent(mode, data)
         }
 
+        if (isCancelled()) throw CancellationException("Dump stopped by user.")
+
         val safeBase = targetFile.nameWithoutExtension.replace(Regex("[^a-zA-Z0-9._-]"), "_")
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
         val outName = "${safeBase}_${mode.key}_${stamp}.${format.ext}"
         val saved = SavedFileManager(context).saveTextDump(outName, body)
+        saveCachedDump(context, sha256, mode, format, saved.file)
 
         val summary = buildString {
             appendLine("✓ Dump saved to Download/RE FORGE/${saved.name}")
@@ -143,9 +258,24 @@ object ForgeDumpGenerator {
         saved to summary
     }
 
-    private fun collectBinaryData(context: Context, r2Bin: File, targetFile: File, onStatus: (String) -> Unit): DumpData {
+    private fun collectBinaryData(
+        context: Context,
+        r2Bin: File,
+        targetFile: File,
+        hasCachedAaa: Boolean,
+        projKey: String,
+        isCancelled: () -> Boolean,
+        onProcessStarted: (Process) -> Unit,
+        onProcessFinished: () -> Unit,
+        onStatus: (String) -> Unit
+    ): DumpData {
+        val analysisCmd = if (hasCachedAaa) {
+            "Po $projKey"
+        } else {
+            "aaa; Ps $projKey"
+        }
         val batchCmd = listOf(
-            "aaa",
+            analysisCmd,
             "ij", "?e $SPLIT_MARK",
             "iEj", "?e $SPLIT_MARK",
             "iij", "?e $SPLIT_MARK",
@@ -175,21 +305,39 @@ object ForgeDumpGenerator {
         env["TMPDIR"] = File(context.cacheDir, "r2tmp").apply { mkdirs() }.absolutePath
         env["R2_NOPLUGINS"] = "1"
 
+        if (isCancelled()) throw CancellationException("Dump stopped by user.")
         val proc = pb.start()
+        onProcessStarted(proc)
         val rawOut = StringBuilder()
         var lastTick = System.currentTimeMillis()
-        BufferedReader(InputStreamReader(proc.inputStream, Charsets.UTF_8)).use { br ->
-            var line: String?
-            while (br.readLine().also { line = it } != null) {
-                rawOut.append(line).append('\n')
-                val now = System.currentTimeMillis()
-                if (now - lastTick >= 650L) {
-                    onStatus("[dump] Analyzing & collecting symbols (${rawOut.length / 1024} KB read)...")
-                    lastTick = now
+        try {
+            if (isCancelled()) {
+                runCatching { proc.destroyForcibly() }
+                throw CancellationException("Dump stopped by user.")
+            }
+            BufferedReader(InputStreamReader(proc.inputStream, Charsets.UTF_8)).use { br ->
+                var line: String?
+                while (br.readLine().also { line = it } != null) {
+                    if (isCancelled()) {
+                        runCatching { proc.destroyForcibly() }
+                        throw CancellationException("Dump stopped by user.")
+                    }
+                    rawOut.append(line).append('\n')
+                    val now = System.currentTimeMillis()
+                    if (now - lastTick >= 650L) {
+                        onStatus("[dump] Analyzing & collecting symbols (${rawOut.length / 1024} KB read)...")
+                        lastTick = now
+                    }
                 }
             }
+            if (isCancelled()) {
+                runCatching { proc.destroyForcibly() }
+                throw CancellationException("Dump stopped by user.")
+            }
+            proc.waitFor()
+        } finally {
+            onProcessFinished()
         }
-        proc.waitFor()
 
         val chunks = rawOut.toString().split(SPLIT_MARK)
         return DumpData(

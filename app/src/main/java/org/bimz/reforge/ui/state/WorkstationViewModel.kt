@@ -55,7 +55,8 @@ data class TerminalSessionState(
     val history: List<ConsoleEntry>,
     val r2Mode: Boolean = false,
     val currentSeekHex: String = "0x00000000",
-    val isRunning: Boolean = false
+    val isRunning: Boolean = false,
+    val targetFile: File? = null
 )
 
 data class WorkstationUiState(
@@ -196,8 +197,22 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
 
         val defaultDest = routeOverride ?: WorkstationDestination.BINARY
 
-        _uiState.update {
-            it.copy(
+        _uiState.update { st ->
+            val updatedSessions = st.terminalSessions.map { s ->
+                if (s.id == st.activeSessionId) {
+                    val changed = s.targetFile != null && s.targetFile.absolutePath != workingFile.absolutePath
+                    if (changed && s.r2Mode) {
+                        sessionCommandRunner.closeSession(s.id)
+                    }
+                    s.copy(
+                        targetFile = workingFile,
+                        r2Mode = if (changed) false else s.r2Mode,
+                        currentSeekHex = if (changed) "0x00000000" else s.currentSeekHex
+                    )
+                } else s
+            }
+            st.copy(
+                terminalSessions = updatedSessions,
                 activeProject = project,
                 overrideActiveFile = null,
                 currentRoute = defaultDest,
@@ -660,30 +675,50 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
     }
 
     fun addTerminalSession() {
-        sessionCounter += 1
+        val st = _uiState.value
+        val usedNums = st.terminalSessions.mapNotNull { s ->
+            Regex("^Session (\\d+)$").find(s.title)?.groupValues?.get(1)?.toIntOrNull()
+        }.toSet()
+        var nextNum = 1
+        while (nextNum in usedNums) nextNum++
+        sessionCounter = maxOf(sessionCounter, nextNum)
+
         val sid = "session-${UUID.randomUUID().toString().take(8)}"
-        val targetLabel = _uiState.value.activeFile?.name ?: "none"
+        val currentSess = st.terminalSessions.firstOrNull { it.id == st.activeSessionId }
+        val inheritedTarget = currentSess?.targetFile ?: st.activeFile
+        val targetLabel = inheritedTarget?.name ?: "none (run 'target' to pick binary)"
         val newSess = TerminalSessionState(
             id = sid,
-            title = "Session $sessionCounter",
+            title = "Session $nextNum",
             history = listOf(
                 ConsoleEntry(
                     command = "session",
-                    output = "Session $sessionCounter ready (Radare2 ARM64 • Unlimited Analysis Time).\nTarget: $targetLabel",
+                    output = "Session $nextNum ready (Radare2 ARM64 • Unlimited Analysis Time).\nTarget: $targetLabel",
                     isError = false
                 )
-            )
+            ),
+            targetFile = inheritedTarget
         )
-        _uiState.value = _uiState.value.copy(
-            terminalSessions = _uiState.value.terminalSessions + newSess,
+        _uiState.value = st.copy(
+            terminalSessions = st.terminalSessions + newSess,
             activeSessionId = sid
         )
     }
 
     fun selectTerminalSession(sessionId: String) {
-        if (_uiState.value.terminalSessions.any { it.id == sessionId }) {
-            _uiState.value = _uiState.value.copy(activeSessionId = sessionId)
+        val st = _uiState.value
+        val targetSess = st.terminalSessions.firstOrNull { it.id == sessionId } ?: return
+        val sessFile = targetSess.targetFile
+        val matchedProject = if (sessFile != null) {
+            st.projects.firstOrNull { File(it.workingPath).absolutePath == sessFile.absolutePath }
+        } else {
+            st.activeProject
         }
+        _uiState.value = st.copy(
+            activeSessionId = sessionId,
+            activeProject = matchedProject ?: st.activeProject,
+            overrideActiveFile = sessFile ?: st.overrideActiveFile
+        )
     }
 
     fun closeTerminalSession(context: Context, sessionId: String) {
@@ -713,12 +748,20 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
             updateTerminalSession(sid) { it.copy(history = emptyList()) }
             return
         }
+        val snapshot = _uiState.value
+        val resolvedTarget = sess.targetFile ?: snapshot.activeFile
+        val availableTargets = buildList {
+            snapshot.projects.forEach { add(File(it.workingPath)) }
+            snapshot.savedForgeFiles.filter { !it.isTextDump }.forEach { add(it.file) }
+        }.distinctBy { it.absolutePath }
+
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
             updateTerminalSession(sid) { it.copy(isRunning = true) }
             val outcome = sessionCommandRunner.executeInteractive(
                 context = context,
                 rawInput = rawInput,
-                activeFile = _uiState.value.activeFile,
+                activeFile = resolvedTarget,
+                availableTargets = availableTargets,
                 sessionId = sid,
                 currentR2Mode = sess.r2Mode,
                 currentSeekHex = sess.currentSeekHex
@@ -731,13 +774,26 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
             val curHist = _uiState.value.terminalSessions.firstOrNull { it.id == sid }?.history.orEmpty()
             val idx = curHist.indexOfFirst { it.id == outcome.entry.id }
             val nextHist = if (idx >= 0) curHist.toMutableList().apply { set(idx, outcome.entry) } else curHist + outcome.entry
+            val newTarget = outcome.updatedTargetFile
             updateTerminalSession(sid) {
                 it.copy(
                     history = nextHist,
                     r2Mode = outcome.nextR2Mode,
                     currentSeekHex = outcome.nextSeekHex,
-                    isRunning = false
+                    isRunning = false,
+                    targetFile = newTarget ?: it.targetFile ?: resolvedTarget
                 )
+            }
+            if (newTarget != null) {
+                val matchedProj = _uiState.value.projects.firstOrNull {
+                    File(it.workingPath).absolutePath == newTarget.absolutePath
+                }
+                _uiState.update {
+                    it.copy(
+                        activeProject = matchedProj ?: it.activeProject,
+                        overrideActiveFile = newTarget
+                    )
+                }
             }
             if (outcome.createdDumpFile != null) {
                 refreshSavedForgeFiles(context)
@@ -851,15 +907,29 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
 
     fun openSavedForgeFileInWorkstation(file: File) {
         hexSession = HexEditorSession(file)
-        _uiState.update {
-            it.copy(
+        _uiState.update { st ->
+            val updatedSessions = st.terminalSessions.map { s ->
+                if (s.id == st.activeSessionId) {
+                    val changed = s.targetFile != null && s.targetFile.absolutePath != file.absolutePath
+                    if (changed && s.r2Mode) {
+                        sessionCommandRunner.closeSession(s.id)
+                    }
+                    s.copy(
+                        targetFile = file,
+                        r2Mode = if (changed) false else s.r2Mode,
+                        currentSeekHex = if (changed) "0x00000000" else s.currentSeekHex
+                    )
+                } else s
+            }
+            st.copy(
+                terminalSessions = updatedSessions,
                 activeProject = null,
                 overrideActiveFile = file,
                 statusBanner = "Active target: ${file.name}",
                 hexPageOffset = 0L,
                 hexLastMatchOffset = -1L,
                 hexLastMatchLength = 0,
-                hexRevision = it.hexRevision + 1
+                hexRevision = st.hexRevision + 1
             )
         }
         loadHexPage(0L)

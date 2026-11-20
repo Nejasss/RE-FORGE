@@ -34,7 +34,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.GridOn
 import androidx.compose.material.icons.outlined.Home
+import androidx.compose.material.icons.outlined.Memory
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material.icons.outlined.FolderSpecial
 import androidx.compose.material.icons.outlined.Terminal
 import androidx.compose.material3.ExperimentalMaterial3Api
@@ -127,6 +130,15 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
             topBar = {
                 if (!hideChrome) {
                 Column {
+                    val activeSession = state.terminalSessions.firstOrNull { it.id == state.activeSessionId }
+                    val resolvedHeaderFile = activeSession?.targetFile ?: state.activeFile
+                    val subtitleText = if (state.currentRoute == WorkstationDestination.TOOLS) {
+                        val sTarget = resolvedHeaderFile?.name ?: "No target (run 'target')"
+                        "${activeSession?.title ?: "Session"} • $sTarget"
+                    } else {
+                        resolvedHeaderFile?.name ?: state.activeProject?.originalFileName ?: "Radare2 ARM64 Workstation"
+                    }
+
                     TopAppBar(
                         title = {
                             Column {
@@ -135,39 +147,55 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 Text(
-                                    text = state.activeFile?.name ?: state.activeProject?.originalFileName ?: "Radare2 ARM64 Workstation",
+                                    text = subtitleText,
                                     style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    maxLines = 1
                                 )
                             }
                         },
                         actions = {
-                            Box(modifier = Modifier.padding(end = 12.dp)) {
+                            val quickTools = listOf(
+                                Triple(WorkstationDestination.HEX, Icons.Outlined.GridOn, "Hex"),
+                                Triple(WorkstationDestination.ENGINES, Icons.Outlined.Memory, "Engines"),
+                                Triple(WorkstationDestination.SETTINGS, Icons.Outlined.Settings, "Settings")
+                            )
+                            Row(
+                                modifier = Modifier.padding(end = 8.dp),
+                                horizontalArrangement = Arrangement.spacedBy(4.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                quickTools.forEach { (dest, icon, desc) ->
+                                    val selected = state.currentRoute == dest
+                                    Surface(
+                                        shape = RoundedCornerShape(10.dp),
+                                        color = if (selected) Color(0xFF1D354D) else Color(0xFF151C26),
+                                        border = BorderStroke(
+                                            1.dp,
+                                            if (selected) Color(0xFF38BDF8) else Color(0xFF263244)
+                                        ),
+                                        modifier = Modifier
+                                            .size(44.dp)
+                                            .clip(RoundedCornerShape(10.dp))
+                                            .clickable { viewModel.navigateTo(dest) }
+                                    ) {
+                                        Box(contentAlignment = Alignment.Center) {
+                                            Icon(
+                                                imageVector = icon,
+                                                contentDescription = desc,
+                                                tint = if (selected) Color(0xFF7DD3FC) else Color(0xFF94A3B8),
+                                                modifier = Modifier.size(18.dp)
+                                            )
+                                        }
+                                    }
+                                }
                                 StatusPill(
-                                    label = "$activeEngineCount/${state.engines.size} ON",
+                                    label = "$activeEngineCount/${state.engines.size}",
                                     tone = if (activeEngineCount > 0) BadgeTone.PASS else BadgeTone.NEUTRAL
                                 )
                             }
                         }
                     )
-                    if (state.currentRoute != WorkstationDestination.TOOLS) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
-                    ) {
-                        secondaryHeaderItems.forEach { dest ->
-                            FilterChip(
-                                selected = state.currentRoute == dest,
-                                onClick = { viewModel.navigateTo(dest) },
-                                label = { Text(dest.label) },
-                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 44.dp)
-                            )
-                        }
-                    }
-                    }
                     AnimatedVisibility(
                         visible = state.isBusy,
                         enter = expandVertically(tween(180)) + fadeIn(tween(180)),
