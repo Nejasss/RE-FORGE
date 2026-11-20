@@ -60,6 +60,9 @@ data class TerminalSessionState(
 
 data class WorkstationUiState(
     val savedForgeFiles: List<SavedForgeFile> = emptyList(),
+    val dumpBubbleFile: SavedForgeFile? = null,
+    val activeDumpViewerFile: SavedForgeFile? = null,
+    val dumpViewerCompactMode: Boolean = true,
     val terminalSessions: List<TerminalSessionState> = listOf(TerminalSessionState("session-1", "Session 1", emptyList())),
     val activeSessionId: String = "session-1",
     val overrideActiveFile: File? = null,
@@ -736,6 +739,10 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
                     isRunning = false
                 )
             }
+            if (outcome.createdDumpFile != null) {
+                refreshSavedForgeFiles(context)
+                _uiState.update { it.copy(dumpBubbleFile = outcome.createdDumpFile) }
+            }
             if (outcome.requestSaveDump) {
                 val dumpText = buildLatestSessionDump()
                 if (dumpText.isNotBlank()) {
@@ -800,8 +807,31 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
         if (payload.isBlank()) return
         val base = (_uiState.value.activeFile?.nameWithoutExtension ?: "r2_dump").replace(Regex("[^a-zA-Z0-9._-]"), "_")
         val stamp = SimpleDateFormat("yyyyMMdd_HHmmss", Locale.US).format(Date())
-        SavedFileManager(context).saveTextDump("${base}_${stamp}.txt", payload)
+        val saved = SavedFileManager(context).saveTextDump("${base}_${stamp}.txt", payload)
         refreshSavedForgeFiles(context)
+        _uiState.update { it.copy(dumpBubbleFile = saved) }
+    }
+
+    fun openDumpViewer(file: SavedForgeFile, compact: Boolean = true) {
+        _uiState.update {
+            it.copy(
+                activeDumpViewerFile = file,
+                dumpBubbleFile = file,
+                dumpViewerCompactMode = compact
+            )
+        }
+    }
+
+    fun minimizeDumpViewerToBubble() {
+        _uiState.update { it.copy(activeDumpViewerFile = null) }
+    }
+
+    fun dismissDumpBubble() {
+        _uiState.update { it.copy(dumpBubbleFile = null, activeDumpViewerFile = null) }
+    }
+
+    fun toggleDumpViewerCompactMode() {
+        _uiState.update { it.copy(dumpViewerCompactMode = !it.dumpViewerCompactMode) }
     }
 
     fun importFileDirectToForge(context: Context, uri: android.net.Uri) {

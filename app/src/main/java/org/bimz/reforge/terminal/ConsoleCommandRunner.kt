@@ -3,6 +3,7 @@ package org.bimz.reforge.terminal
 import android.content.Context
 
 import org.bimz.reforge.engines.Radare2Bridge
+import org.bimz.reforge.storage.SavedForgeFile
 import java.io.BufferedReader
 import java.io.BufferedWriter
 import java.io.File
@@ -20,7 +21,8 @@ data class InteractiveCommandOutcome(
     val entry: ConsoleEntry,
     val nextR2Mode: Boolean,
     val nextSeekHex: String,
-    val requestSaveDump: Boolean = false
+    val requestSaveDump: Boolean = false,
+    val createdDumpFile: SavedForgeFile? = null
 )
 
 class ConsoleCommandRunner {
@@ -116,11 +118,12 @@ class ConsoleCommandRunner {
                 onProgress(baseEntry.copy(output = statusMsg, isRunning = true))
             }
             return res.fold(
-                onSuccess = { (_, summary) ->
+                onSuccess = { (savedFile, summary) ->
                     InteractiveCommandOutcome(
                         entry = baseEntry.copy(output = summary, isError = false, isRunning = false),
                         nextR2Mode = currentR2Mode,
-                        nextSeekHex = currentSeekHex
+                        nextSeekHex = currentSeekHex,
+                        createdDumpFile = savedFile
                     )
                 },
                 onFailure = { err ->

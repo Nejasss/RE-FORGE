@@ -657,6 +657,8 @@ private fun highlightTerminalOutput(raw: String, isError: Boolean): AnnotatedStr
     }
 }
 
+private const val TERMINAL_COLLAPSE_LINES = 20
+
 @Composable
 private fun ConsoleEntryBlock(
     entry: ConsoleEntry,
@@ -664,8 +666,24 @@ private fun ConsoleEntryBlock(
     onCopy: () -> Unit,
     onSaveDump: () -> Unit
 ) {
-    val highlighted = remember(entry.output, entry.isError) {
-        highlightTerminalOutput(entry.output, entry.isError)
+    var isExpanded by remember(entry.id) { mutableStateOf(false) }
+
+    val allLines = remember(entry.output) {
+        if (entry.output.isEmpty()) emptyList() else entry.output.split('
+')
+    }
+    val hiddenCount = (allLines.size - TERMINAL_COLLAPSE_LINES).coerceAtLeast(0)
+    val shouldCollapse = !entry.isRunning && hiddenCount > 0 && !isExpanded
+    val visibleText = remember(allLines, shouldCollapse) {
+        if (shouldCollapse) {
+            allLines.take(TERMINAL_COLLAPSE_LINES).joinToString("
+")
+        } else {
+            entry.output
+        }
+    }
+    val highlighted = remember(visibleText, entry.isError) {
+        highlightTerminalOutput(visibleText, entry.isError)
     }
 
     Surface(
@@ -686,7 +704,7 @@ private fun ConsoleEntryBlock(
                 Spacer(modifier = Modifier.height(5.dp))
             }
 
-            if (entry.output.isNotBlank()) {
+            if (visibleText.isNotBlank()) {
                 SelectionContainer {
                     if (wrapLines) {
                         Text(
@@ -710,6 +728,31 @@ private fun ConsoleEntryBlock(
                             )
                         }
                     }
+                }
+            }
+
+            if (!entry.isRunning && hiddenCount > 0) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = ForgeCyan.copy(alpha = 0.14f),
+                    border = BorderStroke(1.dp, ForgeCyan.copy(alpha = 0.5f)),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { isExpanded = !isExpanded }
+                ) {
+                    Text(
+                        text = if (isExpanded) {
+                            "▲ Collapse output (${allLines.size} lines)"
+                        } else {
+                            "▼ +$hiddenCount more lines • Tap to expand full output"
+                        },
+                        color = ForgeCyan,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 10.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
+                    )
                 }
             }
 

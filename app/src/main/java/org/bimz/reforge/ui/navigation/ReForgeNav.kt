@@ -66,6 +66,7 @@ import org.bimz.reforge.engines.EngineStatus
 import org.bimz.reforge.ui.components.BadgeTone
 import org.bimz.reforge.ui.components.ErrorActionState
 import org.bimz.reforge.ui.components.StatusPill
+import org.bimz.reforge.ui.screens.DumpViewerOverlay
 import org.bimz.reforge.ui.screens.SavedFilesScreen
 import org.bimz.reforge.ui.screens.EnginesScreen
 import org.bimz.reforge.ui.screens.HexViewerScreen
@@ -256,6 +257,9 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                         onSelect = { viewModel.navigateTo(it) }
                     )
                 }
+
+                // In-App Floating Dump Bubble & Compact/Full Dump Reader Overlay
+                DumpViewerOverlay(state = state, viewModel = viewModel)
             }
         }
     }
