@@ -98,6 +98,15 @@ android {
     }
 
     testOptions {
+        unitTests.all {
+            it.testLogging {
+                events("failed", "standardError")
+                exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
+                showExceptions = true
+                showCauses = true
+                showStackTraces = true
+            }
+        }
         unitTests {
             isIncludeAndroidResources = true
             isReturnDefaultValues = true
