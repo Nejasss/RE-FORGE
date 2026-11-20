@@ -147,7 +147,8 @@ fun ToolsScreen(
     val listState = rememberLazyListState()
     val context = LocalContext.current
 
-    val promptPrefix = if (isR2Mode) "r2 [${activeSession.currentSeekHex}]>" else "reforge@arm64:~$"
+    val cleanSeek = Regex("0x[0-9a-fA-F]+").find(activeSession.currentSeekHex)?.value ?: "0x00000000"
+    val promptPrefix = if (isR2Mode) "r2 [$cleanSeek]>" else "reforge@arm64:~$"
     val promptColor = if (isR2Mode) ForgeAmber else ForgeCyan
 
     val lastSnapshotLen = activeSession.history.lastOrNull()?.output?.length ?: 0
@@ -260,11 +261,13 @@ fun ToolsScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (isR2Mode) "r2@${activeSession.currentSeekHex}" else "shell@arm64",
+                        text = if (isR2Mode) "r2@$cleanSeek" else "shell@arm64",
                         color = promptColor,
                         fontFamily = FontFamily.Monospace,
                         fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
                     )
                     Spacer(modifier = Modifier.width(6.dp))
                     if (activeSession.isRunning) {
