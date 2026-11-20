@@ -210,7 +210,12 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                         when (route) {
                             WorkstationDestination.HOME -> HomeScreen(state, viewModel)
                             WorkstationDestination.WORKSPACE -> WorkspaceScreen(state, viewModel)
-                            WorkstationDestination.BINARY -> SavedFilesScreen(state = state, viewModel = viewModel)
+                            WorkstationDestination.BINARY -> SavedFilesScreen(
+                                state = state,
+                                viewModel = viewModel,
+                                onNavigateToTerminal = { viewModel.navigateTo(WorkstationDestination.TOOLS) },
+                                onNavigateToHex = { viewModel.navigateTo(WorkstationDestination.HEX) }
+                            )
                             WorkstationDestination.TOOLS -> ToolsScreen(state, viewModel)
                             WorkstationDestination.HEX -> HexViewerScreen(state, viewModel)
                             WorkstationDestination.ENGINES -> EnginesScreen(state, viewModel)

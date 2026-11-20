@@ -127,8 +127,12 @@ fun HomeScreen(
                     }
                     OutlinedButton(
                         onClick = {
-                            pendingTargetRoute = WorkstationDestination.HEX
-                            openDocLauncher.launch(arrayOf("*/*"))
+                            if (state.activeFile != null) {
+                                viewModel.navigateTo(WorkstationDestination.HEX)
+                            } else {
+                                pendingTargetRoute = WorkstationDestination.HEX
+                                openDocLauncher.launch(arrayOf("*/*"))
+                            }
                         },
                         modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
                         shape = RoundedCornerShape(8.dp)

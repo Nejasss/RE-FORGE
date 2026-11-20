@@ -104,7 +104,8 @@ data class WorkstationUiState(
     val pendingDumpSaveText: String? = null,
     val pendingDumpSaveFilename: String = "reforge_r2_dump.txt"
 ) {
-    val activeFile: File? get() = overrideActiveFile
+    val activeFile: File?
+        get() = overrideActiveFile ?: activeProject?.workingPath?.let { File(it) }
 }
 
 class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
@@ -183,6 +184,7 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
         _uiState.update {
             it.copy(
                 activeProject = project,
+                overrideActiveFile = null,
                 currentRoute = defaultDest,
                 isBusy = false,
                 errorMessage = null,
@@ -789,7 +791,17 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
     }
 
     fun openSavedForgeFileInWorkstation(file: File) {
-        _uiState.value = _uiState.value.copy(overrideActiveFile = file)
+        hexSession = HexEditorSession(file)
+        _uiState.update {
+            it.copy(
+                overrideActiveFile = file,
+                hexPageOffset = 0L,
+                hexLastMatchOffset = -1L,
+                hexLastMatchLength = 0,
+                hexRevision = it.hexRevision + 1
+            )
+        }
+        loadHexPage(0L)
     }
 }
 

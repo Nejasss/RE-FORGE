@@ -151,7 +151,8 @@ fun HexViewerScreen(
     }
 
     val project = state.activeProject
-    if (project == null) {
+    val resolvedFile = state.activeFile
+    if (resolvedFile == null || !resolvedFile.exists()) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -175,17 +176,17 @@ fun HexViewerScreen(
         }
     }
 
-    val workingFile = remember(project.workingPath) { File(project.workingPath) }
-    val fileSize = workingFile.length().coerceAtLeast(project.fileSize)
+    val workingFile = remember(resolvedFile.absolutePath) { resolvedFile }
+    val fileSize = workingFile.length().coerceAtLeast(project?.fileSize ?: 0L)
     val bytesPerRow = 8
     val totalRows = ((fileSize + bytesPerRow - 1L) / bytesPerRow).toInt().coerceAtLeast(1)
 
-    val reader = remember(project.workingPath, state.hexRevision) {
+    val reader = remember(resolvedFile.absolutePath, state.hexRevision) {
         PagedFileReader(workingFile, state.hexRevision)
     }
 
     val listState = rememberLazyListState()
-    var selectedOffset by remember(project.id) { mutableLongStateOf(0L) }
+    var selectedOffset by remember(resolvedFile.absolutePath) { mutableLongStateOf(0L) }
     var showGotoDialog by remember { mutableStateOf(false) }
     var showSearchBar by remember { mutableStateOf(false) }
     var showEditorDrawer by remember { mutableStateOf(false) }
@@ -320,7 +321,7 @@ fun HexViewerScreen(
                         )
                     }
                     IconButton(
-                        onClick = { exportLauncher.launch(project.originalFileName) },
+                        onClick = { exportLauncher.launch(project?.originalFileName ?: resolvedFile.name) },
                         modifier = Modifier.size(40.dp)
                     ) {
                         Icon(
