@@ -51,6 +51,9 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -75,6 +78,8 @@ import org.bimz.reforge.ui.state.WorkstationViewModel
 
 val LocalBottomClearance = compositionLocalOf { 96.dp }
 val LocalIsKeyboardOpen = compositionLocalOf { false }
+val LocalTerminalFullscreen = compositionLocalOf { false }
+val LocalToggleTerminalFullscreen = compositionLocalOf { {} }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -84,8 +89,14 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
 
     val imeBottomDp = with(density) { WindowInsets.ime.getBottom(this).toDp() }
     val navBottomDp = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
+    var isTerminalFullscreen by remember { mutableStateOf(false) }
+    val hideChrome = isTerminalFullscreen && state.currentRoute == WorkstationDestination.TOOLS
     val isKeyboardOpen = imeBottomDp > navBottomDp + 24.dp
-    val bottomClearance: Dp = if (isKeyboardOpen) imeBottomDp + 6.dp else navBottomDp + 88.dp
+    val bottomClearance: Dp = when {
+        isKeyboardOpen -> imeBottomDp + 4.dp
+        hideChrome -> navBottomDp + 8.dp
+        else -> navBottomDp + 76.dp
+    }
 
     val primaryDockItems = listOf(
         WorkstationDestination.HOME to Icons.Outlined.Home,
@@ -106,11 +117,14 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
 
     CompositionLocalProvider(
         LocalBottomClearance provides bottomClearance,
-        LocalIsKeyboardOpen provides isKeyboardOpen
+        LocalIsKeyboardOpen provides isKeyboardOpen,
+        LocalTerminalFullscreen provides hideChrome,
+        LocalToggleTerminalFullscreen provides { isTerminalFullscreen = !isTerminalFullscreen }
     ) {
         Scaffold(
             contentWindowInsets = WindowInsets.statusBars,
             topBar = {
+                if (!hideChrome) {
                 Column {
                     TopAppBar(
                         title = {
@@ -135,6 +149,7 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                             }
                         }
                     )
+                    if (state.currentRoute != WorkstationDestination.TOOLS) {
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
@@ -150,6 +165,7 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                                 modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 44.dp)
                             )
                         }
+                    }
                     }
                     AnimatedVisibility(
                         visible = state.isBusy,
@@ -170,6 +186,7 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                             }
                         }
                     }
+                }
                 }
             }
         ) { innerPadding ->
@@ -224,9 +241,9 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                     }
                 }
 
-                // Floating Pill Navigation Dock (auto-hides when keyboard is open)
+                // Floating Pill Navigation Dock (auto-hides when keyboard is open or terminal fullscreen)
                 AnimatedVisibility(
-                    visible = !isKeyboardOpen,
+                    visible = !isKeyboardOpen && !hideChrome,
                     enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
                     exit = slideOutVertically(tween(150)) { it } + fadeOut(tween(120)),
                     modifier = Modifier

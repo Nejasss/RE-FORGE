@@ -1,5 +1,6 @@
 package org.bimz.reforge.ui.state
 
+import org.bimz.reforge.service.ReForgeSessionService
 import org.bimz.reforge.terminal.ConsoleCommandRunner
 
 import android.content.Context
@@ -741,6 +742,20 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
                     saveDumpToForgeVault(context, dumpText)
                 }
             }
+            ReForgeSessionService.sync(context)
+        }
+    }
+
+    fun shutdownAllBackgroundSessions() {
+        _uiState.value.terminalSessions.forEach { sess ->
+            sessionCommandRunner.closeSession(sess.id)
+        }
+        _uiState.update { st ->
+            st.copy(
+                terminalSessions = st.terminalSessions.map {
+                    it.copy(r2Mode = false, currentSeekHex = "0x00000000", isRunning = false)
+                }
+            )
         }
     }
 

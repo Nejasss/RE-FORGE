@@ -481,15 +481,17 @@ class ConsoleCommandRunner {
                 }
             }
 
-            // Query current seek offset if session is still alive and command wasn't already 's'
+            // Query current seek offset and strictly extract clean 0x... hex token
             if (!aborted && sess.process.isAlive) {
                 val seekOut = querySeekOffset(sess)
-                if (seekOut != null) {
-                    detectedSeek = seekOut
+                val cleanHex = seekOut?.let { Regex("0x[0-9a-fA-F]+").find(it)?.value }
+                if (cleanHex != null) {
+                    detectedSeek = cleanHex
                 } else if (r2Command.startsWith("s ")) {
                     val candidate = r2Command.removePrefix("s ").trim()
-                    if (candidate.startsWith("0x", ignoreCase = true)) {
-                        detectedSeek = candidate
+                    val mHex = Regex("0x[0-9a-fA-F]+").find(candidate)?.value
+                    if (mHex != null) {
+                        detectedSeek = mHex
                     }
                 }
             }

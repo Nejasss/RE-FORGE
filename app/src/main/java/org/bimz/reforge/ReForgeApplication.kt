@@ -17,6 +17,7 @@ import org.bimz.reforge.signing.ApkVerificationEngine
 import org.bimz.reforge.storage.WorkspaceDatabase
 import org.bimz.reforge.storage.WorkspaceRepository
 import org.bimz.reforge.terminal.EngineConsoleRunner
+import org.bimz.reforge.ui.state.WorkstationViewModel
 
 class ReForgeApplication : Application() {
 
@@ -48,6 +49,8 @@ class ReForgeApplication : Application() {
         private set
     lateinit var consoleRunner: EngineConsoleRunner
         private set
+    lateinit var sharedViewModel: WorkstationViewModel
+        private set
 
     override fun onCreate() {
         super.onCreate()
@@ -72,5 +75,6 @@ class ReForgeApplication : Application() {
         verificationEngine = ApkVerificationEngine()
         comparisonEngine = FileComparisonEngine()
         consoleRunner = EngineConsoleRunner(engineRegistry, radare2Bridge)
+        sharedViewModel = WorkstationViewModel(this)
     }
 }

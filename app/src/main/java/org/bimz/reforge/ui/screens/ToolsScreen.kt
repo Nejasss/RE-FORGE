@@ -33,6 +33,10 @@ import androidx.compose.material.icons.outlined.Add
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.Fullscreen
+import androidx.compose.material.icons.outlined.FullscreenExit
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.PlayArrow
 import androidx.compose.material.icons.outlined.SaveAlt
 import androidx.compose.material.icons.outlined.StopCircle
@@ -69,6 +73,8 @@ import androidx.compose.ui.unit.sp
 import org.bimz.reforge.terminal.ConsoleEntry
 import org.bimz.reforge.ui.navigation.LocalBottomClearance
 import org.bimz.reforge.ui.navigation.LocalIsKeyboardOpen
+import org.bimz.reforge.ui.navigation.LocalTerminalFullscreen
+import org.bimz.reforge.ui.navigation.LocalToggleTerminalFullscreen
 import org.bimz.reforge.ui.state.TerminalSessionState
 import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
@@ -126,6 +132,9 @@ fun ToolsScreen(
     var inputField by remember { mutableStateOf(TextFieldValue("")) }
     var selectedGroup by remember { mutableStateOf(R2CommandGroup.ANALYSIS) }
     var wrapLines by remember { mutableStateOf(false) }
+    var showCommandHelper by remember { mutableStateOf(true) }
+    val isFullscreen = LocalTerminalFullscreen.current
+    val toggleFullscreen = LocalToggleTerminalFullscreen.current
 
     val bottomClearance = LocalBottomClearance.current
     val isKeyboardOpen = LocalIsKeyboardOpen.current
@@ -148,13 +157,13 @@ fun ToolsScreen(
         }
     }
 
-    val bottomPad = if (isKeyboardOpen) 6.dp else bottomClearance
+    val bottomPad = if (isKeyboardOpen) 4.dp else bottomClearance
     Column(
         modifier = Modifier
             .fillMaxSize()
             .background(ForgeBg)
             .imePadding()
-            .padding(horizontal = 12.dp, vertical = 10.dp)
+            .padding(horizontal = if (isFullscreen) 4.dp else 6.dp, vertical = 4.dp)
             .padding(bottom = bottomPad)
     ) {
         Surface(
@@ -350,6 +359,17 @@ fun ToolsScreen(
                             modifier = Modifier.size(15.dp)
                         )
                     }
+                    IconButton(
+                        onClick = { toggleFullscreen() },
+                        modifier = Modifier.size(26.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (isFullscreen) Icons.Outlined.FullscreenExit else Icons.Outlined.Fullscreen,
+                            contentDescription = "Toggle Fullscreen Terminal",
+                            tint = if (isFullscreen) ForgeAmber else ForgeCyan,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
 
                 // Terminal Buffer
@@ -387,7 +407,8 @@ fun ToolsScreen(
                     }
                 }
 
-                // Command Group Tabs + Grouped Command Helper Chips (Insert to Input Only)
+                // Collapsible Command Group Tabs + Grouped Command Helper Chips
+                if (showCommandHelper) {
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -464,6 +485,7 @@ fun ToolsScreen(
                         }
                     }
                 }
+                }
 
                 // Prompt Input Line
                 Row(
@@ -477,12 +499,28 @@ fun ToolsScreen(
                         .padding(horizontal = 12.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
+                    Surface(
+                        shape = RoundedCornerShape(5.dp),
+                        color = ForgeSurface,
+                        border = BorderStroke(1.dp, ForgeBorder),
+                        modifier = Modifier.clickable { showCommandHelper = !showCommandHelper }
+                    ) {
+                        Icon(
+                            imageVector = if (showCommandHelper) Icons.Outlined.KeyboardArrowDown else Icons.Outlined.KeyboardArrowUp,
+                            contentDescription = "Toggle Command Helper",
+                            tint = ForgeTextSecondary,
+                            modifier = Modifier.size(18.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = promptPrefix,
                         color = promptColor,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 12.sp,
-                        fontWeight = FontWeight.Bold
+                        fontSize = 11.5.sp,
+                        fontWeight = FontWeight.Bold,
+                        maxLines = 1,
+                        softWrap = false
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Box(modifier = Modifier.weight(1f)) {
