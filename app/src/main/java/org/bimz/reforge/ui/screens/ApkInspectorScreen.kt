@@ -166,8 +166,8 @@ fun ApkInspectorScreen(
                         subtitle = "${comp.type} | ${comp.name}"
                     ) {
                         KeyValueRow("Exported", comp.exported?.toString() ?: "implicit")
-                        if (comp.permission != null) {
-                            KeyValueRow("Permission", comp.permission)
+                        comp.permission?.let { perm ->
+                            KeyValueRow("Permission", perm)
                         }
                         if (comp.intentActions.isNotEmpty()) {
                             KeyValueRow("Actions", comp.intentActions.joinToString(", "))

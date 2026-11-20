@@ -238,8 +238,7 @@ private fun formatHexRows(baseOffset: Long, bytes: ByteArray): String {
                 ascii.append(' ')
             }
         }
-        sb.append(" ").append(ascii).append('
-')
+        sb.append(" ").append(ascii).append('\n')
         i += 8
     }
     return sb.toString()

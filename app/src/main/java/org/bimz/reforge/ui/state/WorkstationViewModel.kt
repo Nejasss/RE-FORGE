@@ -611,8 +611,9 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
                     errorMessage = if (!res.success) res.message else null
                 )
             }
-            if (res.success && res.signedApkPath != null) {
-                verifyApkAtPath(res.signedApkPath)
+            val signedPath = res.signedApkPath
+            if (res.success && signedPath != null) {
+                verifyApkAtPath(signedPath)
             }
         }
     }
