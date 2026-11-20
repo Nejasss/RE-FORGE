@@ -8,13 +8,13 @@ import java.io.File
 import java.util.Locale
 
 data class ConsoleEntry(
-    val id: Long = System.nanoTime(),
     val command: String,
     val output: String,
     val isError: Boolean,
     val isRunning: Boolean = false,
     val isR2Command: Boolean = false,
-    val timestampEpochMs: Long = System.currentTimeMillis()
+    val timestampEpochMs: Long = System.currentTimeMillis(),
+    val id: Long = System.nanoTime()
 )
 
 data class ConsoleTurnOutcome(
@@ -54,7 +54,6 @@ class EngineConsoleRunner(
         val cmd = parts[0].lowercase()
         val arg = parts.getOrNull(1)?.trim().orEmpty()
 
-        // Global shell escape / utility commands
         if (cmd == "save" || cmd == "export") {
             return ConsoleTurnOutcome(
                 entry = ConsoleEntry(
@@ -68,7 +67,6 @@ class EngineConsoleRunner(
             )
         }
 
-        // If already inside interactive `r2` session
         if (currentR2Mode) {
             if (cmd == "exit" || cmd == "q" || cmd == "quit") {
                 return ConsoleTurnOutcome(
@@ -114,7 +112,6 @@ class EngineConsoleRunner(
             return ConsoleTurnOutcome(entry = r2Entry, nextR2Mode = true)
         }
 
-        // Standard shell mode
         return when (cmd) {
             "help" -> ConsoleTurnOutcome(
                 entry = ConsoleEntry(
@@ -281,12 +278,12 @@ class EngineConsoleRunner(
 
         onUpdate?.invoke(
             ConsoleEntry(
-                id = entryId,
                 command = displayCommand,
                 output = startBanner,
                 isError = false,
                 isRunning = true,
-                isR2Command = true
+                isR2Command = true,
+                id = entryId
             )
         )
 
@@ -313,12 +310,12 @@ class EngineConsoleRunner(
 
             onUpdate?.invoke(
                 ConsoleEntry(
-                    id = entryId,
                     command = displayCommand,
                     output = snapshot,
                     isError = false,
                     isRunning = true,
-                    isR2Command = true
+                    isR2Command = true,
+                    id = entryId
                 )
             )
         }
@@ -348,12 +345,12 @@ class EngineConsoleRunner(
         }.trim()
 
         return ConsoleEntry(
-            id = entryId,
             command = displayCommand,
             output = finalOutput,
             isError = !res.success,
             isRunning = false,
-            isR2Command = true
+            isR2Command = true,
+            id = entryId
         )
     }
 }
