@@ -118,8 +118,19 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
     init {
         viewModelScope.launch {
             app.repository.observeProjects().collect { list ->
-                val activeId = _uiState.value.activeProject?.id
-                val updatedActive = list.firstOrNull { it.id == activeId } ?: _uiState.value.activeProject
+                val cur = _uiState.value
+                val activeId = cur.activeProject?.id
+                val updatedActive = when {
+                    activeId != null -> list.firstOrNull { it.id == activeId } ?: cur.activeProject
+                    cur.overrideActiveFile == null && list.isNotEmpty() -> list.first()
+                    else -> null
+                }
+                if (updatedActive != null && hexSession == null) {
+                    val wf = File(updatedActive.workingPath)
+                    if (wf.exists()) {
+                        hexSession = HexEditorSession(wf)
+                    }
+                }
                 val storageBytes = app.repository.calculateTotalStorageBytes()
                 _uiState.update {
                     it.copy(
@@ -583,7 +594,7 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
                 } else {
                     current.pendingDumpSaveText
                 }
-                val baseName = current.activeProject?.originalFileName ?: "reforge"
+                val baseName = current.activeFile?.name ?: current.activeProject?.originalFileName ?: "reforge"
                 current.copy(
                     consoleHistory = updatedList,
                     r2SessionActive = outcome.nextR2Mode,
@@ -780,8 +791,11 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
 
     fun importFileDirectToForge(context: Context, uri: android.net.Uri) {
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            SavedFileManager(context).importUri(uri)
+            val imported = SavedFileManager(context).importUri(uri)
             refreshSavedForgeFiles(context)
+            if (imported != null && imported.file.exists()) {
+                openSavedForgeFileInWorkstation(imported.file)
+            }
         }
     }
 
@@ -794,7 +808,9 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
         hexSession = HexEditorSession(file)
         _uiState.update {
             it.copy(
+                activeProject = null,
                 overrideActiveFile = file,
+                statusBanner = "Active target: ${file.name}",
                 hexPageOffset = 0L,
                 hexLastMatchOffset = -1L,
                 hexLastMatchLength = 0,

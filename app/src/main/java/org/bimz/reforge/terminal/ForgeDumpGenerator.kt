@@ -118,7 +118,7 @@ object ForgeDumpGenerator {
             ?: throw IllegalStateException("Radare2 binary not found.")
 
         onStatus("[dump] Opening & analyzing ${targetFile.name} (aaa)...")
-        val data = collectBinaryData(r2Bin, targetFile, onStatus)
+        val data = collectBinaryData(context, r2Bin, targetFile, onStatus)
 
         onStatus("[dump] Building ${mode.label} (${format.ext.uppercase(Locale.US)})...")
         val meta = buildMeta(targetFile, data)
@@ -143,7 +143,7 @@ object ForgeDumpGenerator {
         saved to summary
     }
 
-    private fun collectBinaryData(r2Bin: File, targetFile: File, onStatus: (String) -> Unit): DumpData {
+    private fun collectBinaryData(context: Context, r2Bin: File, targetFile: File, onStatus: (String) -> Unit): DumpData {
         val batchCmd = listOf(
             "aaa",
             "ij", "?e $SPLIT_MARK",
@@ -156,6 +156,7 @@ object ForgeDumpGenerator {
 
         val pb = ProcessBuilder(
             r2Bin.absolutePath,
+            "-N",
             "-e", "scr.color=0",
             "-e", "scr.utf8=0",
             "-e", "bin.relocs.apply=true",
@@ -164,12 +165,15 @@ object ForgeDumpGenerator {
             "-c", batchCmd,
             targetFile.absolutePath
         )
+        pb.directory(context.filesDir)
         pb.redirectErrorStream(true)
         val env = pb.environment()
         val libDir = r2Bin.parentFile?.absolutePath.orEmpty()
         val prevLd = env["LD_LIBRARY_PATH"].orEmpty()
         env["LD_LIBRARY_PATH"] = if (prevLd.isBlank()) libDir else "$libDir:$prevLd"
-        env["HOME"] = targetFile.parentFile?.absolutePath ?: "/data/local/tmp"
+        env["HOME"] = File(context.filesDir, "r2home").apply { mkdirs() }.absolutePath
+        env["TMPDIR"] = File(context.cacheDir, "r2tmp").apply { mkdirs() }.absolutePath
+        env["R2_NOPLUGINS"] = "1"
 
         val proc = pb.start()
         val rawOut = StringBuilder()

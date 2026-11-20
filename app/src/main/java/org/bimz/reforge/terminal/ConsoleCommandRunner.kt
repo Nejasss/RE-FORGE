@@ -336,18 +336,22 @@ class ConsoleCommandRunner {
         return runCatching {
             val pb = ProcessBuilder(
                 r2Bin.absolutePath,
+                "-N",
                 "-e", "scr.color=0",
                 "-e", "scr.utf8=0",
                 "-e", "bin.relocs.apply=true",
                 "-q",
                 targetFile.absolutePath
             )
+            pb.directory(context.filesDir)
             pb.redirectErrorStream(true)
             val env = pb.environment()
             val libDir = r2Bin.parentFile?.absolutePath.orEmpty()
             val prevLd = env["LD_LIBRARY_PATH"].orEmpty()
             env["LD_LIBRARY_PATH"] = if (prevLd.isBlank()) libDir else "$libDir:$prevLd"
-            env["HOME"] = targetFile.parentFile?.absolutePath ?: "/data/local/tmp"
+            env["HOME"] = File(context.filesDir, "r2home").apply { mkdirs() }.absolutePath
+            env["TMPDIR"] = File(context.cacheDir, "r2tmp").apply { mkdirs() }.absolutePath
+            env["R2_NOPLUGINS"] = "1"
 
             val proc = pb.start()
             val queue = LinkedBlockingQueue<String>()

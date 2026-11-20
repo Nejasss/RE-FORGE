@@ -24,6 +24,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
@@ -45,7 +46,7 @@ fun HomeScreen(
     state: WorkstationUiState,
     viewModel: WorkstationViewModel
 ) {
-    var pendingTargetRoute by remember { mutableStateOf<WorkstationDestination?>(null) }
+    var pendingTargetRoute by rememberSaveable { mutableStateOf<WorkstationDestination?>(null) }
     val bottomClearance = LocalBottomClearance.current
 
     val openDocLauncher = rememberLauncherForActivityResult(
@@ -127,7 +128,7 @@ fun HomeScreen(
                     }
                     OutlinedButton(
                         onClick = {
-                            if (state.activeFile != null) {
+                            if (state.activeFile?.exists() == true) {
                                 viewModel.navigateTo(WorkstationDestination.HEX)
                             } else {
                                 pendingTargetRoute = WorkstationDestination.HEX

@@ -120,7 +120,7 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                                     style = MaterialTheme.typography.titleMedium
                                 )
                                 Text(
-                                    text = state.activeProject?.originalFileName ?: "Radare2 ARM64 Workstation",
+                                    text = state.activeFile?.name ?: state.activeProject?.originalFileName ?: "Radare2 ARM64 Workstation",
                                     style = MaterialTheme.typography.bodySmall,
                                     color = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
