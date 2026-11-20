@@ -339,6 +339,8 @@ class ConsoleCommandRunner {
                 "-N",
                 "-e", "scr.color=0",
                 "-e", "scr.utf8=0",
+                "-e", "scr.interactive=false",
+                "-e", "scr.prompt=false",
                 "-e", "bin.relocs.apply=true",
                 "-q",
                 targetFile.absolutePath
@@ -453,17 +455,24 @@ class ConsoleCommandRunner {
                     break
                 }
 
-                if (line.contains(marker)) {
-                    val beforeMarker = line.substringBefore(marker).trimEnd()
-                    if (beforeMarker.isNotEmpty()) {
+                val cleanedLine = cleanTerminalLine(line)
+                if (cleanedLine.contains(marker)) {
+                    val beforeMarker = cleanedLine.substringBefore(marker).trimEnd()
+                    if (beforeMarker.isNotEmpty() && collected.length < 80_000) {
                         if (collected.isNotEmpty()) collected.append('\n')
                         collected.append(beforeMarker)
                     }
                     break
                 }
 
-                if (collected.isNotEmpty()) collected.append('\n')
-                collected.append(line)
+                if (cleanedLine.isNotEmpty() || collected.isNotEmpty()) {
+                    if (collected.length < 80_000) {
+                        if (collected.isNotEmpty()) collected.append('\n')
+                        collected.append(cleanedLine)
+                    } else if (!collected.endsWith("...[UI buffer capped at 80 KB — use 'dump' for full export]")) {
+                        collected.append("\n...[UI buffer capped at 80 KB — use 'dump' for full export]")
+                    }
+                }
 
                 val now = System.currentTimeMillis()
                 if (now - lastUiPush >= 400L) {
@@ -621,5 +630,14 @@ class ConsoleCommandRunner {
                 appendLine("SHA256: ${sha256.digest().hex()}")
             }.trimEnd()
         }.getOrElse { "Hash error: ${it.message}" }
+    }
+
+    private fun cleanTerminalLine(raw: String): String {
+        return raw
+            .replace(Regex("\\u001B\\[[0-?]*[ -/]*[@-~]"), "")
+            .replace(Regex("\\u001B\\][^\\u0007\\u001B]*(?:\\u0007|\\u001B\\\\)"), "")
+            .replace(Regex("\\[\\?[0-9;]+[hl]"), "")
+            .replace("\r", "")
+            .trimEnd()
     }
 }

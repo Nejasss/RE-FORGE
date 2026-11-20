@@ -48,16 +48,22 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.bimz.reforge.terminal.ConsoleEntry
@@ -78,12 +84,49 @@ import org.bimz.reforge.ui.theme.ForgeTextMuted
 import org.bimz.reforge.ui.theme.ForgeTextPrimary
 import org.bimz.reforge.ui.theme.ForgeTextSecondary
 
+private enum class R2CommandGroup(val label: String, val commands: List<String>) {
+    ANALYSIS(
+        "Analysis",
+        listOf("aaa", "aaaa", "aa", "aac", "aaf", "aap", "af", "afl", "afll", "afi", "afv", "axt", "axf", "agf")
+    ),
+    INFO_SYM(
+        "Info & Sym",
+        listOf("i", "ij", "iI", "ie", "iE", "ii", "is", "iS", "iz", "izz", "il", "ir", "ic")
+    ),
+    DISASM_PRINT(
+        "Disasm & Print",
+        listOf("pd 20", "pd 50", "pdf", "pdf @ main", "pds", "pdr", "px 64", "pxw 32", "pxq 16", "psz", "ps", "p8 32")
+    ),
+    SEEK_NAV(
+        "Seek & Nav",
+        listOf("s", "s 0", "s main", "s entry0", "s+ 16", "s- 16", "so 1", "so -1", "sr PC", "sr SP")
+    ),
+    PATCH_WRITE(
+        "Patch & Write",
+        listOf("oo+", "wa nop", "wao nop", "wao ret0", "wao ret1", "wao jz", "wao jnz", "wx 90", "wv 0", "wz ", "u", "uu")
+    ),
+    SEARCH(
+        "Search",
+        listOf("/ ", "/x ", "/c ", "/a ", "/w ", "/e ")
+    ),
+    DUMP_SHELL(
+        "Dump & Shell",
+        listOf(
+            "dump", "dump exports", "dump imports", "dump functions", "dump strings",
+            "dump sections", "dump md", "dump json", "save", "elf", "hash", "engines", "r2", "help", "exit"
+        )
+    )
+}
+
 @Composable
 fun ToolsScreen(
     state: WorkstationUiState,
     viewModel: WorkstationViewModel
 ) {
-    var input by remember { mutableStateOf("") }
+    var inputField by remember { mutableStateOf(TextFieldValue("")) }
+    var selectedGroup by remember { mutableStateOf(R2CommandGroup.ANALYSIS) }
+    var wrapLines by remember { mutableStateOf(false) }
+
     val bottomClearance = LocalBottomClearance.current
     val isKeyboardOpen = LocalIsKeyboardOpen.current
     val focusRequester = remember { FocusRequester() }
@@ -97,12 +140,6 @@ fun ToolsScreen(
 
     val promptPrefix = if (isR2Mode) "r2 [${activeSession.currentSeekHex}]>" else "reforge@arm64:~$"
     val promptColor = if (isR2Mode) ForgeAmber else ForgeCyan
-
-    val quickChips = if (isR2Mode) {
-        listOf("dump", "dump json", "aaa", "afl", "ij", "iSj", "isj", "izz", "pdf @ main")
-    } else {
-        listOf("dump", "dump md", "dump json", "r2", "elf", "hash", "engines", "help")
-    }
 
     val lastSnapshotLen = activeSession.history.lastOrNull()?.output?.length ?: 0
     LaunchedEffect(activeSession.id, activeSession.history.size, lastSnapshotLen) {
@@ -210,7 +247,7 @@ fun ToolsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(ForgeSurface)
-                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -220,7 +257,7 @@ fun ToolsScreen(
                         fontSize = 11.sp,
                         fontWeight = FontWeight.Bold
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     if (activeSession.isRunning) {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
@@ -229,11 +266,11 @@ fun ToolsScreen(
                             modifier = Modifier.clickable { viewModel.stopActiveSessionCommand(context) }
                         ) {
                             Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
-                                Icon(Icons.Outlined.StopCircle, contentDescription = "Stop", tint = ForgeRose, modifier = Modifier.size(13.dp))
-                                Spacer(modifier = Modifier.width(4.dp))
+                                Icon(Icons.Outlined.StopCircle, contentDescription = "Stop", tint = ForgeRose, modifier = Modifier.size(12.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
                                 Text("STOP", color = ForgeRose, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
                             }
                         }
@@ -246,14 +283,33 @@ fun ToolsScreen(
                             Text(
                                 text = "PERSISTENT r2",
                                 color = ForgeAmber,
-                                fontSize = 10.sp,
+                                fontSize = 9.5.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
                             )
                         }
                     }
                     Spacer(modifier = Modifier.weight(1f))
+
+                    // Toggle Wrap vs Horizontal Scroll for clean column alignment
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = ForgeElevated,
+                        border = BorderStroke(1.dp, ForgeBorder),
+                        modifier = Modifier.clickable { wrapLines = !wrapLines }
+                    ) {
+                        Text(
+                            text = if (wrapLines) "WRAP" else "SCROLL",
+                            color = ForgeCyan,
+                            fontSize = 9.5.sp,
+                            fontFamily = FontFamily.Monospace,
+                            fontWeight = FontWeight.Bold,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 3.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(6.dp))
+
                     if (isR2Mode) {
                         Surface(
                             shape = RoundedCornerShape(6.dp),
@@ -264,34 +320,34 @@ fun ToolsScreen(
                             Text(
                                 text = "Exit r2",
                                 color = ForgeRose,
-                                fontSize = 10.sp,
+                                fontSize = 9.5.sp,
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 3.dp)
                             )
                         }
-                        Spacer(modifier = Modifier.width(6.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
                     }
                     IconButton(
                         onClick = { viewModel.saveDumpToForgeVault(context, "") },
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(26.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.SaveAlt,
                             contentDescription = "Save dump to RE FORGE",
                             tint = ForgeCyan,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                     IconButton(
                         onClick = { viewModel.executeSessionCommand(context, "clear") },
-                        modifier = Modifier.size(28.dp)
+                        modifier = Modifier.size(26.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.DeleteSweep,
                             contentDescription = "Clear buffer",
                             tint = ForgeTextSecondary,
-                            modifier = Modifier.size(16.dp)
+                            modifier = Modifier.size(15.dp)
                         )
                     }
                 }
@@ -302,13 +358,13 @@ fun ToolsScreen(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
+                        .padding(horizontal = 10.dp, vertical = 8.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     if (activeSession.history.isEmpty()) {
                         item(key = "empty_hint") {
                             Text(
-                                text = "Ready • Target: ${state.activeFile?.name ?: "None"} • Tap a command chip below or type 'r2' / 'help'",
+                                text = "Ready • Target: ${state.activeFile?.name ?: "None"} • Tap kategori & command di bawah untuk mengisi prompt, lalu tekan Send.",
                                 color = ForgeTextMuted,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 11.sp
@@ -316,50 +372,95 @@ fun ToolsScreen(
                         }
                     }
                     items(activeSession.history, key = { it.id }) { entry ->
-                            ConsoleEntryBlock(
-                                entry = entry,
-                                onCopy = {
-                                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cb.setPrimaryClip(ClipData.newPlainText("r2_output", entry.output))
-                                },
-                                onSaveDump = {
-                                    val payload = "# Command: ${entry.command}\n# Target: ${state.activeFile?.name ?: "none"}\n\n${entry.output}"
-                                    viewModel.saveDumpToForgeVault(context, payload)
-                                }
+                        ConsoleEntryBlock(
+                            entry = entry,
+                            wrapLines = wrapLines,
+                            onCopy = {
+                                val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                cb.setPrimaryClip(ClipData.newPlainText("r2_output", entry.output.take(200_000)))
+                            },
+                            onSaveDump = {
+                                val payload = "# Command: ${entry.command}\n# Target: ${state.activeFile?.name ?: "none"}\n\n${entry.output}"
+                                viewModel.saveDumpToForgeVault(context, payload)
+                            }
                         )
                     }
                 }
 
-                // Quick Command Chips
-                Row(
+                // Command Group Tabs + Grouped Command Helper Chips (Insert to Input Only)
+                Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(ForgeSurface.copy(alpha = 0.8f))
-                        .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 10.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        .background(ForgeSurface.copy(alpha = 0.92f))
                 ) {
-                    quickChips.forEach { chip ->
-                        Surface(
-                            shape = RoundedCornerShape(7.dp),
-                            color = ForgeElevated,
-                            border = BorderStroke(
-                                1.dp,
-                                if (isR2Mode) ForgeAmber.copy(alpha = 0.35f) else ForgeBorder
-                            ),
-                            modifier = Modifier.clickable {
-                                if (!activeSession.isRunning) {
-                                    viewModel.executeSessionCommand(context, chip)
-                                }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(horizontal = 8.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp)
+                    ) {
+                        R2CommandGroup.entries.forEach { group ->
+                            val active = group == selectedGroup
+                            Surface(
+                                shape = RoundedCornerShape(6.dp),
+                                color = if (active) ForgeCyan.copy(alpha = 0.18f) else Color.Transparent,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (active) ForgeCyan.copy(alpha = 0.65f) else ForgeBorder.copy(alpha = 0.6f)
+                                ),
+                                modifier = Modifier.clickable { selectedGroup = group }
+                            ) {
+                                Text(
+                                    text = group.label,
+                                    color = if (active) ForgeCyan else ForgeTextSecondary,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                                )
                             }
-                        ) {
-                            Text(
-                                text = chip,
-                                color = if (isR2Mode) ForgeAmber else ForgeCyan,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.sp,
-                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
-                            )
+                        }
+                    }
+
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState())
+                            .padding(start = 8.dp, end = 8.dp, bottom = 6.dp),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        selectedGroup.commands.forEach { chip ->
+                            Surface(
+                                shape = RoundedCornerShape(7.dp),
+                                color = ForgeElevated,
+                                border = BorderStroke(
+                                    1.dp,
+                                    if (isR2Mode) ForgeAmber.copy(alpha = 0.35f) else ForgeBorder
+                                ),
+                                modifier = Modifier.clickable {
+                                    val cur = inputField.text
+                                    val nextText = when {
+                                        cur.isBlank() -> chip
+                                        cur.endsWith(" ") || cur.endsWith("@") -> cur + chip
+                                        else -> chip
+                                    }
+                                    inputField = TextFieldValue(
+                                        text = nextText,
+                                        selection = TextRange(nextText.length)
+                                    )
+                                    focusRequester.requestFocus()
+                                    keyboardController?.show()
+                                }
+                            ) {
+                                Text(
+                                    text = chip.trimEnd(),
+                                    color = if (isR2Mode) ForgeAmber else ForgeCyan,
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 11.sp,
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp)
+                                )
+                            }
                         }
                     }
                 }
@@ -385,17 +486,17 @@ fun ToolsScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Box(modifier = Modifier.weight(1f)) {
-                        if (input.isEmpty()) {
+                        if (inputField.text.isEmpty()) {
                             Text(
-                                text = if (isR2Mode) "aaa | AA | afl | pdf @ main | exit" else "r2 | elf | hash | save",
+                                text = if (isR2Mode) "aaa | afl | pdf @ main | wa nop" else "r2 | dump | elf | hash",
                                 color = ForgeTextMuted,
                                 fontFamily = FontFamily.Monospace,
                                 fontSize = 12.sp
                             )
                         }
                         BasicTextField(
-                            value = input,
-                            onValueChange = { input = it },
+                            value = inputField,
+                            onValueChange = { inputField = it },
                             singleLine = true,
                             textStyle = TextStyle(
                                 color = ForgeTextPrimary,
@@ -405,13 +506,15 @@ fun ToolsScreen(
                             cursorBrush = SolidColor(promptColor),
                             keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
                             keyboardActions = KeyboardActions(onSend = {
-                                if (input.isNotBlank() && !activeSession.isRunning) {
-                                    val cmd = input
-                                    input = ""
+                                val cmd = inputField.text
+                                if (cmd.isNotBlank() && !activeSession.isRunning) {
+                                    inputField = TextFieldValue("")
                                     viewModel.executeSessionCommand(context, cmd)
                                 }
                             }),
-                            modifier = Modifier.fillMaxWidth().focusRequester(focusRequester)
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .focusRequester(focusRequester)
                         )
                     }
                     if (activeSession.isRunning) {
@@ -428,9 +531,9 @@ fun ToolsScreen(
                     } else {
                         IconButton(
                             onClick = {
-                                if (input.isNotBlank()) {
-                                    val cmd = input
-                                    input = ""
+                                val cmd = inputField.text
+                                if (cmd.isNotBlank()) {
+                                    inputField = TextFieldValue("")
                                     viewModel.executeSessionCommand(context, cmd)
                                 }
                             },
@@ -449,68 +552,162 @@ fun ToolsScreen(
     }
 }
 
+private fun highlightTerminalOutput(raw: String, isError: Boolean): AnnotatedString {
+    if (isError) {
+        return buildAnnotatedString {
+            withStyle(SpanStyle(color = ForgeRose)) {
+                append(raw)
+            }
+        }
+    }
+    val addrRegex = Regex("0x[0-9a-fA-F]+")
+    val stringRegex = Regex("\"[^\"]*\"")
+    val branchRegex = Regex("\\b(bl|blr|b|br|beq|bne|bgt|blt|bge|ble|cbz|cbnz|tbz|tbnz|ret|nop|call|jmp|je|jne)\\b")
+
+    return buildAnnotatedString {
+        val lines = raw.split('\n')
+        lines.forEachIndexed { idx, line ->
+            val trimmed = line.trimStart()
+            when {
+                trimmed.startsWith(";--") || trimmed.startsWith("//") || trimmed.startsWith("#") -> {
+                    withStyle(SpanStyle(color = ForgeEmerald, fontWeight = FontWeight.Medium)) {
+                        append(line)
+                    }
+                }
+                trimmed.startsWith("✓") || trimmed.startsWith("[r2]") || trimmed.startsWith("[dump]") -> {
+                    withStyle(SpanStyle(color = ForgeCyan, fontWeight = FontWeight.SemiBold)) {
+                        append(line)
+                    }
+                }
+                else -> {
+                    var cursor = 0
+                    val matches = mutableListOf<Triple<IntRange, Color, FontWeight>>()
+                    addrRegex.findAll(line).forEach { m ->
+                        matches.add(Triple(m.range, ForgeCyan, FontWeight.SemiBold))
+                    }
+                    stringRegex.findAll(line).forEach { m ->
+                        matches.add(Triple(m.range, ForgeAmber, FontWeight.Normal))
+                    }
+                    branchRegex.findAll(line).forEach { m ->
+                        matches.add(Triple(m.range, ForgeRose, FontWeight.Bold))
+                    }
+                    val sorted = matches.sortedBy { it.first.first }
+                    for ((range, color, weight) in sorted) {
+                        if (range.first < cursor) continue
+                        if (range.first > cursor) {
+                            withStyle(SpanStyle(color = ForgeTextPrimary)) {
+                                append(line.substring(cursor, range.first))
+                            }
+                        }
+                        withStyle(SpanStyle(color = color, fontWeight = weight)) {
+                            append(line.substring(range.first, range.last + 1))
+                        }
+                        cursor = range.last + 1
+                    }
+                    if (cursor < line.length) {
+                        withStyle(SpanStyle(color = ForgeTextPrimary)) {
+                            append(line.substring(cursor))
+                        }
+                    }
+                }
+            }
+            if (idx < lines.lastIndex) append('\n')
+        }
+    }
+}
+
 @Composable
 private fun ConsoleEntryBlock(
     entry: ConsoleEntry,
+    wrapLines: Boolean,
     onCopy: () -> Unit,
     onSaveDump: () -> Unit
 ) {
-    Column(modifier = Modifier.fillMaxWidth()) {
-        if (entry.command != "session" && entry.command != "target") {
-            Text(
-                text = if (entry.isR2Command) "r2> ${entry.command}" else "$ ${entry.command}",
-                color = if (entry.isR2Command) ForgeAmber else ForgeCyan,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-                fontWeight = FontWeight.SemiBold
-            )
-            Spacer(modifier = Modifier.height(3.dp))
-        }
-        SelectionContainer {
-            Text(
-                text = entry.output,
-                color = when {
-                    entry.isError -> ForgeRose
-                    entry.isRunning -> ForgeAmber
-                    entry.command == "session" || entry.command == "target" -> ForgeEmerald
-                    else -> ForgeTextPrimary
-                },
-                fontFamily = FontFamily.Monospace,
-                fontSize = 11.5.sp,
-                lineHeight = 16.sp
-            )
-        }
-        if (!entry.isRunning && entry.output.length > 24 && entry.command != "session" && entry.command != "target") {
-            Spacer(modifier = Modifier.height(5.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = ForgeSurface,
-                    border = BorderStroke(1.dp, ForgeBorder),
-                    modifier = Modifier.clickable { onCopy() }
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = ForgeTextSecondary, modifier = Modifier.size(12.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Copy", color = ForgeTextSecondary, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+    val highlighted = remember(entry.output, entry.isError) {
+        highlightTerminalOutput(entry.output, entry.isError)
+    }
+
+    Surface(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(10.dp),
+        color = Color(0xFF0B1018),
+        border = BorderStroke(1.dp, ForgeBorder.copy(alpha = 0.65f))
+    ) {
+        Column(modifier = Modifier.padding(10.dp)) {
+            if (entry.command != "session" && entry.command != "target") {
+                Text(
+                    text = if (entry.isR2Command) "r2> ${entry.command}" else "$ ${entry.command}",
+                    color = if (entry.isR2Command) ForgeAmber else ForgeCyan,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 11.5.sp,
+                    fontWeight = FontWeight.Bold
+                )
+                Spacer(modifier = Modifier.height(5.dp))
+            }
+
+            if (entry.output.isNotBlank()) {
+                SelectionContainer {
+                    if (wrapLines) {
+                        Text(
+                            text = highlighted,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp,
+                            lineHeight = 15.5.sp
+                        )
+                    } else {
+                        Box(
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .horizontalScroll(rememberScrollState())
+                        ) {
+                            Text(
+                                text = highlighted,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                lineHeight = 15.5.sp,
+                                softWrap = false
+                            )
+                        }
                     }
                 }
-                Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = ForgeCyan.copy(alpha = 0.12f),
-                    border = BorderStroke(1.dp, ForgeCyan.copy(alpha = 0.45f)),
-                    modifier = Modifier.clickable { onSaveDump() }
+            }
+
+            if (!entry.isRunning && entry.output.isNotBlank()) {
+                Spacer(modifier = Modifier.height(7.dp))
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = ForgeSurface,
+                        border = BorderStroke(1.dp, ForgeBorder),
+                        modifier = Modifier.clickable { onCopy() }
                     ) {
-                        Icon(Icons.Outlined.SaveAlt, contentDescription = null, tint = ForgeCyan, modifier = Modifier.size(12.dp))
-                        Spacer(modifier = Modifier.width(4.dp))
-                        Text("Save to RE FORGE", color = ForgeCyan, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = ForgeTextSecondary, modifier = Modifier.size(12.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Copy", color = ForgeTextSecondary, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                        }
+                    }
+
+                    Surface(
+                        shape = RoundedCornerShape(6.dp),
+                        color = ForgeEmerald.copy(alpha = 0.12f),
+                        border = BorderStroke(1.dp, ForgeEmerald.copy(alpha = 0.4f)),
+                        modifier = Modifier.clickable { onSaveDump() }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.SaveAlt, contentDescription = null, tint = ForgeEmerald, modifier = Modifier.size(12.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Save to RE FORGE", color = ForgeEmerald, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                        }
                     }
                 }
             }
