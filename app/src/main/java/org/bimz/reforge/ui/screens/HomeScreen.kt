@@ -91,7 +91,7 @@ fun HomeScreen(
                 KeyValueRow("Storage Used", formatByteSize(state.workspaceStorageBytes))
                 KeyValueRow(
                     "Active Target",
-                    state.activeProject?.originalFileName ?: "None loaded"
+                    state.activeProject?.originalFileName ?: state.activeFile?.name ?: "None loaded"
                 )
             }
         }

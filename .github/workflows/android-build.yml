@@ -64,7 +64,7 @@ jobs:
 
       - name: Generate Ephemeral CI Release Keystore if Secret Absent
         run: |
-          if [ -z "${REFORGE_KEYSTORE_PATH:-}" ]; then
+          if [ -z "${REFORGE_KEYSTORE_PATH:-}" ] && [ ! -f "app/reforge-signing.jks" ]; then
             KEYSTORE_FILE="$RUNNER_TEMP/reforge-ci-release.p12"
             keytool -genkeypair -v \
               -keystore "$KEYSTORE_FILE" \

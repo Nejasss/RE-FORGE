@@ -547,7 +547,7 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
             _uiState.update { it.copy(consoleHistory = emptyList()) }
             return
         }
-        val activeFile = _uiState.value.activeProject?.let { File(it.workingPath) }
+        val activeFile = _uiState.value.activeFile
         val wasR2Mode = _uiState.value.r2SessionActive
 
         viewModelScope.launch {
