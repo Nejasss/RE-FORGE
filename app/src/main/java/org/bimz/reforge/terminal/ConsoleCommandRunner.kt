@@ -3,6 +3,7 @@ package org.bimz.reforge.terminal
 import android.content.Context
 
 import org.bimz.reforge.engines.Radare2Bridge
+import org.bimz.reforge.storage.PatchAuditManager
 import org.bimz.reforge.storage.SavedForgeFile
 import java.io.BufferedReader
 import java.io.BufferedWriter
@@ -322,6 +323,9 @@ class ConsoleCommandRunner {
                         appendLine("  hash            - Compute MD5 / SHA-1 / SHA-256")
                         appendLine("  engines         - Check Radare2 binary status & version")
                         appendLine("  dump [mode] [fmt] - Generate Il2Cpp-style dump (txt/md/json) to Vault")
+                        appendLine("  target [n|name] - List or switch active binary for this session")
+                        appendLine("  patches         - View dated HEX & Radare2 patch history")
+                        appendLine("  clear-cache     - Clear Radare2 analysis & temp cache")
                         appendLine("  save | export   - Save latest output to Download/RE FORGE")
                         appendLine("  clear           - Clear session terminal buffer")
                     }.trimEnd(),
@@ -330,6 +334,32 @@ class ConsoleCommandRunner {
                 nextR2Mode = false,
                 nextSeekHex = currentSeekHex
             )
+
+            "patches", "patchlog" -> {
+                val logText = PatchAuditManager.readPatchHistory(context)
+                InteractiveCommandOutcome(
+                    entry = ConsoleEntry(
+                        command = trimmed,
+                        output = if (logText.isBlank()) "[patches] No HEX or Radare2 patches recorded yet." else logText,
+                        isError = false
+                    ),
+                    nextR2Mode = false,
+                    nextSeekHex = currentSeekHex
+                )
+            }
+
+            "clear-cache", "cache" -> {
+                val freed = PatchAuditManager.clearAllCaches(context)
+                InteractiveCommandOutcome(
+                    entry = ConsoleEntry(
+                        command = trimmed,
+                        output = "[cache] Cleared Radare2 analysis & temp cache (${formatTargetSize(freed)} freed).",
+                        isError = false
+                    ),
+                    nextR2Mode = false,
+                    nextSeekHex = currentSeekHex
+                )
+            }
 
             "engines" -> {
                 val bridge = Radare2Bridge(context)
@@ -459,6 +489,7 @@ class ConsoleCommandRunner {
                 "-e", "scr.interactive=false",
                 "-e", "scr.prompt=false",
                 "-e", "bin.relocs.apply=true",
+                "-e", "prj.vc=false",
                 "-q",
                 targetFile.absolutePath
             )
@@ -505,6 +536,40 @@ class ConsoleCommandRunner {
         }
     }
 
+    private fun isR2WriteCommand(rawCmd: String): Boolean {
+        val parts = rawCmd.split(";")
+        val writePrefixes = listOf("wa", "wao", "wx", "wv", "wz", "wo", "wb", "wc", "wf", "wp", "ws", "ww")
+        return parts.any { part ->
+            val token = part.trim().split(Regex("\\s+"), limit = 2).firstOrNull().orEmpty()
+            if (token.isEmpty() || token.endsWith("?")) return@any false
+            token == "w" || writePrefixes.any { token.equals(it, ignoreCase = true) }
+        }
+    }
+
+    private fun queryR2QuickLine(sess: PersistentR2Session, cmd: String): String {
+        val m = "__REFORGE_Q_${System.nanoTime()}__"
+        val sb = StringBuilder()
+        try {
+            synchronized(sess.writer) {
+                sess.writer.write(cmd)
+                sess.writer.newLine()
+                sess.writer.write("?e $m")
+                sess.writer.newLine()
+                sess.writer.flush()
+            }
+            while (true) {
+                val line = sess.lines.poll(1200, TimeUnit.MILLISECONDS) ?: break
+                if (line == "__REFORGE_EOF__" || line.contains(m)) break
+                if (line.isNotBlank()) {
+                    if (sb.isNotEmpty()) sb.append(" ")
+                    sb.append(line.trim())
+                }
+            }
+        } catch (_: Throwable) {
+        }
+        return sb.toString().trim()
+    }
+
     private fun runInPersistentR2(
         context: Context,
         sessionId: String,
@@ -548,9 +613,23 @@ class ConsoleCommandRunner {
             } else {
                 null
             }
+            val isWriteOp = isR2WriteCommand(r2Command)
+            val r2BackupFile = if (isWriteOp) {
+                PatchAuditManager.backupBeforePatch(context, targetFile)
+            } else {
+                null
+            }
+            val atAddr = Regex("@\\s*([^;]+)").find(r2Command)?.groupValues?.get(1)?.trim()
+            val probeTarget = if (!atAddr.isNullOrBlank()) "@ $atAddr" else ""
+            val beforeBytesHex = if (isWriteOp) {
+                queryR2QuickLine(sess, "p8 8 $probeTarget").uppercase(Locale.US)
+            } else {
+                ""
+            }
+
             val useCachedAaa = isPureAaa && targetSha != null && ForgeDumpGenerator.isAaaCached(context, targetSha)
             val effectiveR2Cmd = when {
-                useCachedAaa && targetSha != null -> "Po ${ForgeDumpGenerator.r2ProjectKey(targetSha)}"
+                useCachedAaa && targetSha != null -> "P ${ForgeDumpGenerator.r2ProjectKey(targetSha)}"
                 isPureAaa && targetSha != null -> "aaa; Ps ${ForgeDumpGenerator.r2ProjectKey(targetSha)}"
                 else -> r2Command
             }
@@ -610,6 +689,25 @@ class ConsoleCommandRunner {
                 if (now - lastUiPush >= 400L) {
                     onProgress(baseEntry.copy(output = collected.toString(), isRunning = true))
                     lastUiPush = now
+                }
+            }
+
+            if (!aborted && isWriteOp) {
+                val afterBytesHex = queryR2QuickLine(sess, "p8 8 $probeTarget").uppercase(Locale.US)
+                val addrLabel = if (!atAddr.isNullOrBlank()) atAddr else currentSeekHex
+                val beforeFmt = beforeBytesHex.chunked(2).joinToString(" ").ifBlank { "?" }
+                val afterFmt = afterBytesHex.chunked(2).joinToString(" ").ifBlank { "?" }
+                PatchAuditManager.recordPatchEvent(
+                    context = context,
+                    source = "R2",
+                    targetFile = targetFile,
+                    addressLabel = addrLabel,
+                    detail = "$r2Command ($beforeFmt -> $afterFmt)",
+                    backupFile = r2BackupFile
+                )
+                if (r2BackupFile != null) {
+                    if (collected.isNotEmpty()) collected.append("\n")
+                    collected.append("[backup] Auto-backup saved: ${r2BackupFile.name} (logged to patch_history.log)")
                 }
             }
 

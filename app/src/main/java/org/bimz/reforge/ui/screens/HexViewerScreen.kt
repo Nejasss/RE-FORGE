@@ -6,7 +6,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
-import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -27,8 +27,10 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Edit
+import androidx.compose.material.icons.outlined.History
 import androidx.compose.material.icons.outlined.Redo
 import androidx.compose.material.icons.outlined.Save
 import androidx.compose.material.icons.outlined.Search
@@ -60,8 +62,12 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
@@ -76,12 +82,16 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.util.Locale
 
+private val HEX_LUT = Array(256) { "%02X".format(Locale.US, it) }
+private val ASCII_LUT = CharArray(256) { if (it in 0x20..0x7E) it.toChar() else '.' }
+private val HEX_COL_HEADER = "OFFSET    00 01 02 03 04 05 06 07 08 09 0A 0B 0C 0D 0E 0F  ASCII"
+
 private class PagedFileReader(
     private val file: File,
     @Suppress("unused") private val revision: Int
 ) {
-    private val blockSize = 4096
-    private val cache = LruCache<Long, ByteArray>(32) // 128 KB RAM cache
+    private val blockSize = 16384
+    private val cache = LruCache<Long, ByteArray>(64)
 
     fun readBytes(offset: Long, length: Int): ByteArray {
         if (!file.exists() || offset < 0L || offset >= file.length() || length <= 0) {
@@ -122,6 +132,86 @@ private class PagedFileReader(
         }.getOrDefault(ByteArray(0))
         cache.put(blockIndex, data)
         return data
+    }
+}
+
+private fun buildHexRowAnnotated(
+    rowOffset: Long,
+    rowBytes: ByteArray,
+    bytesPerRow: Int,
+    selectedOffset: Long,
+    matchStart: Long,
+    matchLength: Int
+): AnnotatedString {
+    val matchEnd = if (matchStart >= 0L && matchLength > 0) matchStart + matchLength else -1L
+    val isRowActive = selectedOffset in rowOffset until (rowOffset + bytesPerRow)
+
+    return buildAnnotatedString {
+        withStyle(
+            SpanStyle(
+                color = if (isRowActive) Color(0xFF38BDF8) else Color(0xFF64748B),
+                fontWeight = if (isRowActive) FontWeight.Bold else FontWeight.Normal
+            )
+        ) {
+            append(rowOffset.toString(16).uppercase(Locale.US).padStart(8, '0'))
+            append("  ")
+        }
+
+        for (col in 0 until bytesPerRow) {
+            if (col < rowBytes.size) {
+                val bVal = rowBytes[col].toInt() and 0xFF
+                val addr = rowOffset + col
+                val isSel = addr == selectedOffset
+                val isMatch = matchEnd > 0L && addr in matchStart until matchEnd
+                val style = when {
+                    isSel -> SpanStyle(
+                        color = Color(0xFF06101D),
+                        background = Color(0xFF38BDF8),
+                        fontWeight = FontWeight.Bold
+                    )
+                    isMatch -> SpanStyle(
+                        color = Color(0xFFFEF08A),
+                        background = Color(0xFF854D0E),
+                        fontWeight = FontWeight.Bold
+                    )
+                    bVal == 0 -> SpanStyle(color = Color(0xFF475569))
+                    else -> SpanStyle(color = Color(0xFFE2E8F0))
+                }
+                withStyle(style) {
+                    append(HEX_LUT[bVal])
+                }
+                append(' ')
+            } else {
+                append("   ")
+            }
+        }
+
+        append(' ')
+
+        for (col in 0 until bytesPerRow) {
+            if (col < rowBytes.size) {
+                val bVal = rowBytes[col].toInt() and 0xFF
+                val addr = rowOffset + col
+                val isSel = addr == selectedOffset
+                val isMatch = matchEnd > 0L && addr in matchStart until matchEnd
+                val style = when {
+                    isSel -> SpanStyle(
+                        color = Color(0xFF052E16),
+                        background = Color(0xFF4ADE80),
+                        fontWeight = FontWeight.Bold
+                    )
+                    isMatch -> SpanStyle(
+                        color = Color(0xFFFEF08A),
+                        background = Color(0xFF854D0E)
+                    )
+                    bVal in 0x20..0x7E -> SpanStyle(color = Color(0xFFCBD5E1))
+                    else -> SpanStyle(color = Color(0xFF475569))
+                }
+                withStyle(style) {
+                    append(ASCII_LUT[bVal])
+                }
+            }
+        }
     }
 }
 
@@ -178,7 +268,7 @@ fun HexViewerScreen(
 
     val workingFile = remember(resolvedFile.absolutePath) { resolvedFile }
     val fileSize = workingFile.length().coerceAtLeast(project?.fileSize ?: 0L)
-    val bytesPerRow = 8
+    val bytesPerRow = 16
     val totalRows = ((fileSize + bytesPerRow - 1L) / bytesPerRow).toInt().coerceAtLeast(1)
 
     val reader = remember(resolvedFile.absolutePath, state.hexRevision) {
@@ -190,6 +280,7 @@ fun HexViewerScreen(
     var showGotoDialog by remember { mutableStateOf(false) }
     var showSearchBar by remember { mutableStateOf(false) }
     var showEditorDrawer by remember { mutableStateOf(false) }
+    var showPatchHistoryDialog by remember { mutableStateOf(false) }
     var searchQuery by remember { mutableStateOf("") }
     var searchAsciiMode by remember { mutableStateOf(false) }
 
@@ -206,9 +297,9 @@ fun HexViewerScreen(
     LaunchedEffect(selectedOffset, selectedBytes8) {
         val firstByte = selectedBytes8.firstOrNull()
         if (firstByte != null) {
-            editHexInput = "%02X".format(firstByte.toInt() and 0xFF)
-            val ch = firstByte.toInt() and 0xFF
-            editAsciiInput = if (ch in 0x20..0x7E) ch.toChar().toString() else "."
+            val v = firstByte.toInt() and 0xFF
+            editHexInput = HEX_LUT[v]
+            editAsciiInput = ASCII_LUT[v].toString()
         }
     }
 
@@ -229,13 +320,12 @@ fun HexViewerScreen(
         modifier = Modifier
             .fillMaxSize()
             .padding(
-                start = 10.dp,
-                end = 10.dp,
+                start = 8.dp,
+                end = 8.dp,
                 top = 6.dp,
                 bottom = bottomClearance
             )
     ) {
-        // 1. Play Store Hex Editor Top Toolbar
         Surface(
             shape = RoundedCornerShape(10.dp),
             color = panelBg,
@@ -249,7 +339,6 @@ fun HexViewerScreen(
                 horizontalArrangement = Arrangement.SpaceBetween,
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Clickable Offset Indicator -> opens Go-To Offset Dialog
                 Surface(
                     onClick = { showGotoDialog = true },
                     shape = RoundedCornerShape(6.dp),
@@ -258,11 +347,11 @@ fun HexViewerScreen(
                     modifier = Modifier.defaultMinSize(minHeight = 40.dp)
                 ) {
                     Column(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        modifier = Modifier.padding(horizontal = 9.dp, vertical = 4.dp),
                         verticalArrangement = Arrangement.Center
                     ) {
                         Text(
-                            text = "0x${selectedOffset.toString(16).uppercase().padStart(8, '0')}",
+                            text = "0x${selectedOffset.toString(16).uppercase(Locale.US).padStart(8, '0')}",
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -270,8 +359,8 @@ fun HexViewerScreen(
                             color = accentBlue
                         )
                         Text(
-                            text = "Size: $fileSize B (Tap Goto)",
-                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 10.sp),
+                            text = "$fileSize B • Goto",
+                            style = MaterialTheme.typography.labelSmall.copy(fontSize = 9.5.sp),
                             color = Color(0xFF94A3B8)
                         )
                     }
@@ -280,7 +369,7 @@ fun HexViewerScreen(
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     IconButton(
                         onClick = { showSearchBar = !showSearchBar },
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(38.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Search,
@@ -290,7 +379,7 @@ fun HexViewerScreen(
                     }
                     IconButton(
                         onClick = { showEditorDrawer = !showEditorDrawer },
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(38.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Edit,
@@ -301,7 +390,7 @@ fun HexViewerScreen(
                     IconButton(
                         onClick = { viewModel.undoHexPatch() },
                         enabled = state.hexCanUndo,
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(38.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Undo,
@@ -312,7 +401,7 @@ fun HexViewerScreen(
                     IconButton(
                         onClick = { viewModel.redoHexPatch() },
                         enabled = state.hexCanRedo,
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(38.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Redo,
@@ -321,8 +410,21 @@ fun HexViewerScreen(
                         )
                     }
                     IconButton(
+                        onClick = {
+                            viewModel.refreshStorageStats()
+                            showPatchHistoryDialog = true
+                        },
+                        modifier = Modifier.size(38.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.History,
+                            contentDescription = "Patch History",
+                            tint = accentBlue
+                        )
+                    }
+                    IconButton(
                         onClick = { exportLauncher.launch(project?.originalFileName ?: resolvedFile.name) },
-                        modifier = Modifier.size(40.dp)
+                        modifier = Modifier.size(38.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Save,
@@ -334,7 +436,6 @@ fun HexViewerScreen(
             }
         }
 
-        // 2. Collapsible Search Bar (Hex & ASCII Find / Find Next)
         if (showSearchBar) {
             Spacer(modifier = Modifier.height(6.dp))
             Surface(
@@ -414,9 +515,8 @@ fun HexViewerScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(5.dp))
 
-        // 3. Live Multi-Type Data Inspector Strip (INT8/16/32, UINT, FLOAT32, BIN)
         Surface(
             shape = RoundedCornerShape(8.dp),
             color = Color(0xFF101722),
@@ -427,8 +527,8 @@ fun HexViewerScreen(
                 modifier = Modifier
                     .fillMaxWidth()
                     .horizontalScroll(rememberScrollState())
-                    .padding(horizontal = 10.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.spacedBy(14.dp)
+                    .padding(horizontal = 10.dp, vertical = 5.dp),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
             ) {
                 val b0 = selectedBytes8.getOrNull(0)?.toInt()?.and(0xFF)
                 val i8 = selectedBytes8.getOrNull(0)?.toInt()
@@ -459,9 +559,8 @@ fun HexViewerScreen(
             }
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(5.dp))
 
-        // 4. Main Scrollable Hex + ASCII Matrix with Column Headers & Fast Scrubber
         Surface(
             shape = RoundedCornerShape(10.dp),
             color = editorBg,
@@ -470,185 +569,101 @@ fun HexViewerScreen(
                 .weight(1f)
                 .fillMaxWidth()
         ) {
+            val hScroll = rememberScrollState()
             Column(modifier = Modifier.fillMaxSize()) {
-                // Sticky Column Header
-                Row(
+                Box(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF151E2C))
-                        .padding(horizontal = 8.dp, vertical = 5.dp),
-                    verticalAlignment = Alignment.CenterVertically
+                        .horizontalScroll(hScroll)
+                        .padding(start = 8.dp, end = 22.dp, top = 5.dp, bottom = 5.dp)
                 ) {
                     Text(
-                        text = "OFFSET  ",
+                        text = HEX_COL_HEADER,
                         style = MaterialTheme.typography.labelSmall.copy(
                             fontFamily = FontFamily.Monospace,
                             fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
+                            fontSize = 10.sp,
+                            letterSpacing = 0.sp
                         ),
                         color = accentBlue,
-                        modifier = Modifier.width(66.dp)
-                    )
-                    Row(
-                        modifier = Modifier.weight(1f),
-                        horizontalArrangement = Arrangement.SpaceBetween
-                    ) {
-                        for (c in 0 until bytesPerRow) {
-                            Text(
-                                text = "%02X".format(c),
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                    fontWeight = FontWeight.Bold,
-                                    fontSize = 11.sp
-                                ),
-                                color = Color(0xFF94A3B8)
-                            )
-                        }
-                    }
-                    Spacer(modifier = Modifier.width(8.dp))
-                    Text(
-                        text = "ASCII   ",
-                        style = MaterialTheme.typography.labelSmall.copy(
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold,
-                            fontSize = 11.sp
-                        ),
-                        color = accentGreen,
-                        modifier = Modifier.width(68.dp)
+                        softWrap = false,
+                        maxLines = 1
                     )
                 }
 
-                // Virtualized Scrollable Rows + Right Fast-Scroll Thumb
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     LazyColumn(
                         state = listState,
                         modifier = Modifier
                             .fillMaxSize()
-                            .padding(start = 6.dp, end = 18.dp),
-                        contentPadding = PaddingValues(vertical = 4.dp)
+                            .horizontalScroll(hScroll)
+                            .padding(start = 8.dp, end = 22.dp),
+                        contentPadding = PaddingValues(vertical = 3.dp)
                     ) {
-                        items(count = totalRows, key = { it }) { rowIndex ->
+                        items(
+                            count = totalRows,
+                            key = { it },
+                            contentType = { "hex_row" }
+                        ) { rowIndex ->
                             val rowOffset = rowIndex.toLong() * bytesPerRow
                             val rowBytes = reader.readBytes(rowOffset, bytesPerRow)
                             val isRowSelected = selectedOffset in rowOffset until (rowOffset + bytesPerRow)
-
-                            Row(
-                                modifier = Modifier
-                                    .fillMaxWidth()
-                                    .background(if (isRowSelected) Color(0xFF162235) else Color.Transparent)
-                                    .padding(vertical = 2.dp),
-                                verticalAlignment = Alignment.CenterVertically
+                            val rowAnnotated = remember(
+                                rowOffset,
+                                state.hexRevision,
+                                if (isRowSelected) selectedOffset else -1L,
+                                state.hexLastMatchOffset,
+                                state.hexLastMatchLength
                             ) {
-                                // Offset Column
-                                Text(
-                                    text = rowOffset.toString(16).uppercase().padStart(8, '0'),
-                                    style = MaterialTheme.typography.labelSmall.copy(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp
-                                    ),
-                                    color = if (isRowSelected) accentBlue else Color(0xFF64748B),
-                                    modifier = Modifier.width(66.dp)
+                                buildHexRowAnnotated(
+                                    rowOffset = rowOffset,
+                                    rowBytes = rowBytes,
+                                    bytesPerRow = bytesPerRow,
+                                    selectedOffset = selectedOffset,
+                                    matchStart = state.hexLastMatchOffset,
+                                    matchLength = state.hexLastMatchLength
                                 )
-
-                                // 8 Interactive Hex Cells
-                                Row(
-                                    modifier = Modifier.weight(1f),
-                                    horizontalArrangement = Arrangement.SpaceBetween
-                                ) {
-                                    for (col in 0 until bytesPerRow) {
-                                        val byteAddr = rowOffset + col
-                                        if (col < rowBytes.size) {
-                                            val bVal = rowBytes[col].toInt() and 0xFF
-                                            val isSelected = byteAddr == selectedOffset
-                                            val isSearchMatch = state.hexLastMatchOffset >= 0L &&
-                                                byteAddr in state.hexLastMatchOffset until (state.hexLastMatchOffset + state.hexLastMatchLength)
-
-                                            val cellBg = when {
-                                                isSelected -> accentBlue
-                                                isSearchMatch -> Color(0xFF854D0E)
-                                                else -> Color.Transparent
-                                            }
-                                            val cellFg = when {
-                                                isSelected -> Color(0xFF06101D)
-                                                isSearchMatch -> Color(0xFFFEF08A)
-                                                bVal == 0 -> Color(0xFF475569)
-                                                else -> Color(0xFFE2E8F0)
-                                            }
-
-                                            Box(
-                                                contentAlignment = Alignment.Center,
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(3.dp))
-                                                    .background(cellBg)
-                                                    .clickable {
-                                                        selectedOffset = byteAddr
-                                                        showEditorDrawer = true
-                                                    }
-                                                    .padding(horizontal = 2.dp, vertical = 2.dp)
-                                            ) {
-                                                Text(
-                                                    text = "%02X".format(bVal),
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontFamily = FontFamily.Monospace,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                        fontSize = 11.sp
-                                                    ),
-                                                    color = cellFg
-                                                )
-                                            }
-                                        } else {
-                                            Text(
-                                                text = "  ",
-                                                style = MaterialTheme.typography.labelSmall.copy(
-                                                    fontFamily = FontFamily.Monospace,
-                                                    fontSize = 11.sp
-                                                )
-                                            )
-                                        }
-                                    }
-                                }
-
-                                Spacer(modifier = Modifier.width(8.dp))
-
-                                // 8 Interactive ASCII Cells
-                                Row(modifier = Modifier.width(68.dp)) {
-                                    for (col in 0 until bytesPerRow) {
-                                        val byteAddr = rowOffset + col
-                                        if (col < rowBytes.size) {
-                                            val bVal = rowBytes[col].toInt() and 0xFF
-                                            val ch = if (bVal in 0x20..0x7E) bVal.toChar() else '.'
-                                            val isSelected = byteAddr == selectedOffset
-                                            Box(
-                                                modifier = Modifier
-                                                    .clip(RoundedCornerShape(2.dp))
-                                                    .background(if (isSelected) accentGreen else Color.Transparent)
-                                                    .clickable {
-                                                        selectedOffset = byteAddr
-                                                        showEditorDrawer = true
-                                                    }
-                                            ) {
-                                                Text(
-                                                    text = ch.toString(),
-                                                    style = MaterialTheme.typography.labelSmall.copy(
-                                                        fontFamily = FontFamily.Monospace,
-                                                        fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                                        fontSize = 11.sp
-                                                    ),
-                                                    color = when {
-                                                        isSelected -> Color(0xFF052E16)
-                                                        bVal in 0x20..0x7E -> Color(0xFFCBD5E1)
-                                                        else -> Color(0xFF475569)
-                                                    }
-                                                )
-                                            }
-                                        }
-                                    }
-                                }
                             }
+
+                            var rowWidthPx by remember { mutableIntStateOf(1) }
+                            Text(
+                                text = rowAnnotated,
+                                style = MaterialTheme.typography.labelSmall.copy(
+                                    fontFamily = FontFamily.Monospace,
+                                    fontSize = 10.sp,
+                                    lineHeight = 14.5.sp,
+                                    letterSpacing = 0.sp
+                                ),
+                                softWrap = false,
+                                maxLines = 1,
+                                modifier = Modifier
+                                    .background(if (isRowSelected) Color(0xFF142033) else Color.Transparent)
+                                    .padding(vertical = 1.5.dp)
+                                    .onSizeChanged { rowWidthPx = it.width.coerceAtLeast(1) }
+                                    .pointerInput(rowOffset, rowBytes.size) {
+                                        detectTapGestures { pos ->
+                                            val charIdx = ((pos.x / rowWidthPx.toFloat()) * 75f).toInt().coerceIn(0, 74)
+                                            if (charIdx < 9) {
+                                                selectedOffset = rowOffset
+                                                showGotoDialog = true
+                                            } else {
+                                                val col = when {
+                                                    charIdx in 10..57 -> ((charIdx - 10) / 3).coerceIn(0, bytesPerRow - 1)
+                                                    charIdx >= 59 -> (charIdx - 59).coerceIn(0, bytesPerRow - 1)
+                                                    else -> 0
+                                                }
+                                                if (col < rowBytes.size) {
+                                                    selectedOffset = rowOffset + col
+                                                    showEditorDrawer = true
+                                                }
+                                            }
+                                        }
+                                    }
+                            )
                         }
                     }
 
-                    // Fast Vertical Scrubber Track on Right Edge
                     FastScrollBar(
                         totalItems = totalRows,
                         firstVisibleItem = listState.firstVisibleItemIndex,
@@ -667,7 +682,6 @@ fun HexViewerScreen(
             }
         }
 
-        // 5. Inline Byte & ASCII Patcher Drawer (when a byte is tapped or Edit icon clicked)
         if (showEditorDrawer) {
             Spacer(modifier = Modifier.height(6.dp))
             Surface(
@@ -683,7 +697,7 @@ fun HexViewerScreen(
                         verticalAlignment = Alignment.CenterVertically
                     ) {
                         Text(
-                            text = "Edit @ 0x${selectedOffset.toString(16).uppercase()}",
+                            text = "Patch @ 0x${selectedOffset.toString(16).uppercase(Locale.US)} (Auto-Backup ON)",
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontFamily = FontFamily.Monospace,
                                 fontWeight = FontWeight.Bold
@@ -726,7 +740,7 @@ fun HexViewerScreen(
                             onClick = {
                                 val hexPayload = if (editAsciiMode) {
                                     editAsciiInput.toByteArray(Charsets.UTF_8)
-                                        .joinToString(" ") { "%02X".format(it.toInt() and 0xFF) }
+                                        .joinToString(" ") { HEX_LUT[it.toInt() and 0xFF] }
                                 } else {
                                     editHexInput
                                 }
@@ -741,7 +755,6 @@ fun HexViewerScreen(
 
                     Spacer(modifier = Modifier.height(6.dp))
 
-                    // Fill Range Helper (e.g. NOP-fill or zero-fill N bytes)
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -779,9 +792,38 @@ fun HexViewerScreen(
         }
     }
 
-    // Go-To Offset Dialog (supports Hex & Decimal)
+    if (showPatchHistoryDialog) {
+        AlertDialog(
+            onDismissRequest = { showPatchHistoryDialog = false },
+            title = { Text("Patch History (HEX & Radare2)") },
+            text = {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(280.dp)
+                        .verticalScroll(rememberScrollState())
+                        .horizontalScroll(rememberScrollState())
+                ) {
+                    Text(
+                        text = state.patchHistoryText.ifBlank { "No HEX or Radare2 patches recorded yet." },
+                        style = MaterialTheme.typography.bodySmall.copy(
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 11.sp
+                        ),
+                        softWrap = false
+                    )
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showPatchHistoryDialog = false }) {
+                    Text("Close")
+                }
+            }
+        )
+    }
+
     if (showGotoDialog) {
-        var gotoInput by remember { mutableStateOf(selectedOffset.toString(16).uppercase()) }
+        var gotoInput by remember { mutableStateOf(selectedOffset.toString(16).uppercase(Locale.US)) }
         var isDecimal by remember { mutableStateOf(false) }
 
         AlertDialog(

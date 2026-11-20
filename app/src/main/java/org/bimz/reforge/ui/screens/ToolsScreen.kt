@@ -46,6 +46,13 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.material.icons.outlined.Undo
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -130,6 +137,8 @@ fun ToolsScreen(
     viewModel: WorkstationViewModel
 ) {
     var inputField by remember { mutableStateOf(TextFieldValue("")) }
+    var inputUndoStack by remember { mutableStateOf<List<String>>(emptyList()) }
+    var historyCursor by remember { mutableIntStateOf(-1) }
     var selectedGroup by remember { mutableStateOf(R2CommandGroup.ANALYSIS) }
     var wrapLines by remember { mutableStateOf(false) }
     var showCommandHelper by remember { mutableStateOf(true) }
@@ -470,6 +479,9 @@ fun ToolsScreen(
                                         cur.endsWith(" ") || cur.endsWith("@") -> cur + chip
                                         else -> chip
                                     }
+                                    if (cur != nextText) {
+                                        inputUndoStack = (inputUndoStack + cur).takeLast(30)
+                                    }
                                     inputField = TextFieldValue(
                                         text = nextText,
                                         selection = TextRange(nextText.length)
@@ -491,7 +503,35 @@ fun ToolsScreen(
                 }
                 }
 
-                // Prompt Input Line
+                val typedCmdHistory = remember(activeSession.id, activeSession.history.size) {
+                    activeSession.history
+                        .map { it.command.trim() }
+                        .filter { it.isNotBlank() && it != "session" }
+                }
+                val recallPrevCmd: () -> Unit = {
+                    if (typedCmdHistory.isNotEmpty()) {
+                        val nextIdx = if (historyCursor < 0) typedCmdHistory.lastIndex else (historyCursor - 1).coerceAtLeast(0)
+                        historyCursor = nextIdx
+                        val recalled = typedCmdHistory[nextIdx]
+                        inputUndoStack = (inputUndoStack + inputField.text).takeLast(30)
+                        inputField = TextFieldValue(recalled, TextRange(recalled.length))
+                    }
+                }
+                val recallNextCmd: () -> Unit = {
+                    if (historyCursor >= 0) {
+                        if (historyCursor < typedCmdHistory.lastIndex) {
+                            val nextIdx = historyCursor + 1
+                            historyCursor = nextIdx
+                            val recalled = typedCmdHistory[nextIdx]
+                            inputField = TextFieldValue(recalled, TextRange(recalled.length))
+                        } else {
+                            historyCursor = -1
+                            inputField = TextFieldValue("")
+                        }
+                    }
+                }
+
+                // Prompt Input Line + Termux CMD History / Undo Controls
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -500,7 +540,7 @@ fun ToolsScreen(
                             focusRequester.requestFocus()
                             keyboardController?.show()
                         }
-                        .padding(horizontal = 12.dp, vertical = 9.dp),
+                        .padding(horizontal = 8.dp, vertical = 7.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Surface(
@@ -516,29 +556,88 @@ fun ToolsScreen(
                             modifier = Modifier.size(18.dp)
                         )
                     }
+                    Spacer(modifier = Modifier.width(4.dp))
+                    Surface(
+                        shape = RoundedCornerShape(5.dp),
+                        color = ForgeSurface,
+                        border = BorderStroke(1.dp, ForgeBorder),
+                        modifier = Modifier.clickable { recallPrevCmd() }
+                    ) {
+                        Text(
+                            text = "▲",
+                            color = if (typedCmdHistory.isNotEmpty()) ForgeCyan else ForgeTextMuted,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Surface(
+                        shape = RoundedCornerShape(5.dp),
+                        color = ForgeSurface,
+                        border = BorderStroke(1.dp, ForgeBorder),
+                        modifier = Modifier.clickable { recallNextCmd() }
+                    ) {
+                        Text(
+                            text = "▼",
+                            color = if (historyCursor >= 0) ForgeCyan else ForgeTextMuted,
+                            fontFamily = FontFamily.Monospace,
+                            fontSize = 10.sp,
+                            modifier = Modifier.padding(horizontal = 5.dp, vertical = 2.dp)
+                        )
+                    }
+                    Spacer(modifier = Modifier.width(3.dp))
+                    Surface(
+                        shape = RoundedCornerShape(5.dp),
+                        color = ForgeSurface,
+                        border = BorderStroke(1.dp, ForgeBorder),
+                        modifier = Modifier.clickable {
+                            if (inputUndoStack.isNotEmpty()) {
+                                val prev = inputUndoStack.last()
+                                inputUndoStack = inputUndoStack.dropLast(1)
+                                inputField = TextFieldValue(prev, TextRange(prev.length))
+                            }
+                        }
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Undo,
+                            contentDescription = "Undo Input",
+                            tint = if (inputUndoStack.isNotEmpty()) ForgeAmber else ForgeTextMuted,
+                            modifier = Modifier
+                                .padding(2.dp)
+                                .size(14.dp)
+                        )
+                    }
                     Spacer(modifier = Modifier.width(6.dp))
                     Text(
                         text = promptPrefix,
                         color = promptColor,
                         fontFamily = FontFamily.Monospace,
-                        fontSize = 11.5.sp,
+                        fontSize = 11.sp,
                         fontWeight = FontWeight.Bold,
                         maxLines = 1,
                         softWrap = false
                     )
-                    Spacer(modifier = Modifier.width(8.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
                     Box(modifier = Modifier.weight(1f)) {
                         if (inputField.text.isEmpty()) {
                             Text(
-                                text = if (isR2Mode) "aaa | afl | pdf @ main | wa nop" else "r2 | dump | elf | hash",
+                                text = if (isR2Mode) "aaa | afl | pdf @ main" else "r2 | target | dump",
                                 color = ForgeTextMuted,
                                 fontFamily = FontFamily.Monospace,
-                                fontSize = 12.sp
+                                fontSize = 11.5.sp,
+                                maxLines = 1
                             )
                         }
                         BasicTextField(
                             value = inputField,
-                            onValueChange = { inputField = it },
+                            onValueChange = { updated ->
+                                if (updated.text != inputField.text) {
+                                    inputUndoStack = (inputUndoStack + inputField.text).takeLast(30)
+                                    historyCursor = -1
+                                }
+                                inputField = updated
+                            },
                             singleLine = true,
                             textStyle = TextStyle(
                                 color = ForgeTextPrimary,
@@ -550,6 +649,8 @@ fun ToolsScreen(
                             keyboardActions = KeyboardActions(onSend = {
                                 val cmd = inputField.text
                                 if (cmd.isNotBlank() && !activeSession.isRunning) {
+                                    inputUndoStack = (inputUndoStack + cmd).takeLast(30)
+                                    historyCursor = -1
                                     inputField = TextFieldValue("")
                                     viewModel.executeSessionCommand(context, cmd)
                                 }
@@ -557,6 +658,21 @@ fun ToolsScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .focusRequester(focusRequester)
+                                .onPreviewKeyEvent { ev ->
+                                    if (ev.type == KeyEventType.KeyDown) {
+                                        when (ev.key) {
+                                            Key.DirectionUp -> {
+                                                recallPrevCmd()
+                                                true
+                                            }
+                                            Key.DirectionDown -> {
+                                                recallNextCmd()
+                                                true
+                                            }
+                                            else -> false
+                                        }
+                                    } else false
+                                }
                         )
                     }
                     if (activeSession.isRunning) {
@@ -575,6 +691,8 @@ fun ToolsScreen(
                             onClick = {
                                 val cmd = inputField.text
                                 if (cmd.isNotBlank()) {
+                                    inputUndoStack = (inputUndoStack + cmd).takeLast(30)
+                                    historyCursor = -1
                                     inputField = TextFieldValue("")
                                     viewModel.executeSessionCommand(context, cmd)
                                 }

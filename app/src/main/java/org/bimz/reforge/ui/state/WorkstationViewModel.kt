@@ -4,6 +4,7 @@ import org.bimz.reforge.service.ReForgeSessionService
 import org.bimz.reforge.terminal.ConsoleCommandRunner
 
 import android.content.Context
+import org.bimz.reforge.storage.PatchAuditManager
 import org.bimz.reforge.storage.SavedFileManager
 import org.bimz.reforge.storage.SavedForgeFile
 import java.text.SimpleDateFormat
@@ -107,7 +108,11 @@ data class WorkstationUiState(
     val consoleHistory: List<ConsoleEntry> = emptyList(),
     val r2SessionActive: Boolean = false,
     val pendingDumpSaveText: String? = null,
-    val pendingDumpSaveFilename: String = "reforge_r2_dump.txt"
+    val pendingDumpSaveFilename: String = "reforge_r2_dump.txt",
+    val cacheSizeBytes: Long = 0L,
+    val backupCount: Int = 0,
+    val backupSizeBytes: Long = 0L,
+    val patchHistoryText: String = ""
 ) {
     val activeFile: File?
         get() = overrideActiveFile ?: activeProject?.workingPath?.let { File(it) }
@@ -448,18 +453,64 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
             _uiState.update { it.copy(errorMessage = "Invalid hexadecimal offset.") }
             return
         }
+        val targetFile = _uiState.value.activeFile ?: _uiState.value.activeProject?.let { File(it.workingPath) }
+        val cleanNewHex = replacementHex.replace("0x", "", ignoreCase = true).replace(Regex("\\s+"), "")
+        val byteLen = (cleanNewHex.length / 2).coerceAtLeast(1)
+
         viewModelScope.launch {
+            val (backupFile, beforeHex) = withContext(Dispatchers.IO) {
+                if (targetFile != null && targetFile.exists()) {
+                    val bak = PatchAuditManager.backupBeforePatch(app, targetFile)
+                    val before = runCatching {
+                        RandomAccessFile(targetFile, "r").use { raf ->
+                            if (offset < raf.length()) {
+                                raf.seek(offset)
+                                val maxRead = minOf(byteLen.toLong(), raf.length() - offset).toInt()
+                                val buf = ByteArray(maxRead)
+                                raf.readFully(buf)
+                                buf.joinToString(" ") { "%02X".format(it.toInt() and 0xFF) }
+                            } else ""
+                        }
+                    }.getOrDefault("")
+                    bak to before
+                } else {
+                    null to ""
+                }
+            }
+
             val res = session.applyPatch(offset, replacementHex)
             res.fold(
                 onSuccess = {
+                    val afterHex = cleanNewHex.uppercase(Locale.US).chunked(2).joinToString(" ")
+                    val addrLabel = "0x${offset.toString(16).uppercase(Locale.US)}"
+                    if (targetFile != null) {
+                        withContext(Dispatchers.IO) {
+                            PatchAuditManager.recordPatchEvent(
+                                context = app,
+                                source = "HEX",
+                                targetFile = targetFile,
+                                addressLabel = addrLabel,
+                                detail = "${beforeHex.ifBlank { "?" }} -> $afterHex (${byteLen}B)",
+                                backupFile = backupFile
+                            )
+                        }
+                    }
+                    _uiState.value.activeProject?.let { proj ->
+                        val dateStamp = SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.US).format(Date())
+                        val noteLine = "[$dateStamp] HEX $addrLabel: ${beforeHex.ifBlank { "?" }} -> $afterHex"
+                        val updatedNotes = if (proj.notes.isBlank()) noteLine else "${proj.notes}\n$noteLine"
+                        app.repository.updateProjectNotes(proj.id, updatedNotes)
+                    }
                     loadHexPage(offset)
                     refreshModifiedEntries()
+                    refreshStorageStats()
+                    val bakBanner = if (backupFile != null) " • Backup: ${backupFile.name}" else ""
                     _uiState.update {
                         it.copy(
                             hexRevision = it.hexRevision + 1,
                             hexCanUndo = session.canUndo,
                             hexCanRedo = session.canRedo,
-                            statusBanner = "Patched working copy at 0x${offset.toString(16).uppercase()}."
+                            statusBanner = "Patched $addrLabel$bakBanner"
                         )
                     }
                     onPatched?.invoke()
@@ -856,6 +907,41 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
 
     fun refreshSavedForgeFiles(context: Context) {
         _uiState.value = _uiState.value.copy(savedForgeFiles = SavedFileManager(context).listSavedFiles())
+        refreshStorageStats()
+    }
+
+    fun refreshStorageStats() {
+        val cacheBytes = PatchAuditManager.getCacheSizeBytes(app)
+        val (bakCount, bakBytes) = PatchAuditManager.getBackupStats(app)
+        val history = PatchAuditManager.readPatchHistory(app)
+        _uiState.update {
+            it.copy(
+                cacheSizeBytes = cacheBytes,
+                backupCount = bakCount,
+                backupSizeBytes = bakBytes,
+                patchHistoryText = history
+            )
+        }
+    }
+
+    fun clearAppCaches() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val freed = PatchAuditManager.clearAllCaches(app)
+            refreshStorageStats()
+            _uiState.update {
+                it.copy(statusBanner = "Cleared cache (${freed / 1024} KB freed).")
+            }
+        }
+    }
+
+    fun clearAutoBackups() {
+        viewModelScope.launch(Dispatchers.IO) {
+            val freed = PatchAuditManager.clearBackups(app)
+            refreshStorageStats()
+            _uiState.update {
+                it.copy(statusBanner = "Cleared auto-backups (${freed / 1024} KB freed).")
+            }
+        }
     }
 
     fun saveDumpToForgeVault(context: Context, text: String) {

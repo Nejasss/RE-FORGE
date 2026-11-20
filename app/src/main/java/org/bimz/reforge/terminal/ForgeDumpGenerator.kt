@@ -270,7 +270,7 @@ object ForgeDumpGenerator {
         onStatus: (String) -> Unit
     ): DumpData {
         val analysisCmd = if (hasCachedAaa) {
-            "Po $projKey"
+            "P $projKey"
         } else {
             "aaa; Ps $projKey"
         }
@@ -291,6 +291,7 @@ object ForgeDumpGenerator {
             "-e", "scr.utf8=0",
             "-e", "bin.relocs.apply=true",
             "-e", "bin.demangle=true",
+            "-e", "prj.vc=false",
             "-q",
             "-c", batchCmd,
             targetFile.absolutePath
