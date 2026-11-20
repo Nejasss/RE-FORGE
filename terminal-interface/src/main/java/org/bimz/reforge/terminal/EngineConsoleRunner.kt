@@ -20,6 +20,7 @@ data class ConsoleEntry(
 data class ConsoleTurnOutcome(
     val entry: ConsoleEntry,
     val nextR2Mode: Boolean,
+    val nextSeekHex: String = "0x00000000",
     val requestSaveDump: Boolean = false
 )
 
@@ -28,25 +29,43 @@ class EngineConsoleRunner(
     private val radare2Bridge: Radare2Bridge
 ) {
     suspend fun execute(rawInput: String, activeFile: File?): ConsoleEntry {
-        return executeInteractive(rawInput, activeFile, currentR2Mode = false, onUpdate = null).entry
+        return executeInteractive(
+            rawInput = rawInput,
+            activeFile = activeFile,
+            sessionId = "default",
+            currentR2Mode = false,
+            currentSeekHex = "0x00000000",
+            onUpdate = null
+        ).entry
+    }
+
+    fun stopSession(sessionId: String) {
+        radare2Bridge.stopSession(sessionId)
+    }
+
+    fun closeSession(sessionId: String) {
+        radare2Bridge.closeSession(sessionId)
     }
 
     suspend fun executeInteractive(
         rawInput: String,
         activeFile: File?,
-        currentR2Mode: Boolean,
-        onUpdate: ((ConsoleEntry) -> Unit)?
+        sessionId: String = "default",
+        currentR2Mode: Boolean = false,
+        currentSeekHex: String = "0x00000000",
+        onUpdate: ((ConsoleEntry) -> Unit)? = null
     ): ConsoleTurnOutcome {
         val line = rawInput.trim()
         if (line.isEmpty()) {
             return ConsoleTurnOutcome(
                 entry = ConsoleEntry(
                     command = rawInput,
-                    output = if (currentR2Mode) "r2 interactive mode active. Type a command (e.g. aaa, afl, ij) or 'exit'." else "Type 'help' or 'r2' to enter Radare2 mode.",
+                    output = if (currentR2Mode) "r2 interactive session active. Type a command (e.g. aaa, afl, ij) or 'exit'." else "Type 'help' or 'r2' to enter Radare2 mode.",
                     isError = false,
                     isR2Command = currentR2Mode
                 ),
-                nextR2Mode = currentR2Mode
+                nextR2Mode = currentR2Mode,
+                nextSeekHex = currentSeekHex
             )
         }
 
@@ -58,25 +77,28 @@ class EngineConsoleRunner(
             return ConsoleTurnOutcome(
                 entry = ConsoleEntry(
                     command = line,
-                    output = "Opening Save Dump dialog for latest terminal output...",
+                    output = "Saving latest terminal output to RE FORGE folder...",
                     isError = false,
                     isR2Command = currentR2Mode
                 ),
                 nextR2Mode = currentR2Mode,
+                nextSeekHex = currentSeekHex,
                 requestSaveDump = true
             )
         }
 
         if (currentR2Mode) {
             if (cmd == "exit" || cmd == "q" || cmd == "quit") {
+                radare2Bridge.closeSession(sessionId)
                 return ConsoleTurnOutcome(
                     entry = ConsoleEntry(
                         command = line,
-                        output = "[r2] Exited Radare2 interactive session. Returned to workstation shell.",
+                        output = "[r2] Closed Radare2 interactive session. Returned to workstation shell.",
                         isError = false,
                         isR2Command = true
                     ),
-                    nextR2Mode = false
+                    nextR2Mode = false,
+                    nextSeekHex = "0x00000000"
                 )
             }
             if (cmd == "help") {
@@ -84,32 +106,39 @@ class EngineConsoleRunner(
                     entry = ConsoleEntry(
                         command = line,
                         output = """
-                        Radare2 Interactive Session Commands (no 'r2 ' prefix needed):
-                          aaa / AA          Full / All auto-analysis with live progress
-                          afl               List all discovered functions
+                        Radare2 Persistent Session Commands (no 'r2 ' prefix needed):
+                          aaa / AA          Full / All auto-analysis (no timeout limit, state persists)
+                          afl               List all analyzed functions in this session
                           pdf @ <sym|addr>  Disassemble function (e.g. pdf @ main)
+                          s <addr|sym>      Seek to address/symbol (updates prompt address)
                           ij / iSj / isj    Binary info, sections, symbols (JSON)
                           izz               Extract all strings across binary
                           px 64             Hexdump 64 bytes at current seek
-                          save              Save latest dump output to device storage
+                          save              Save latest dump output straight to RE FORGE folder
                           clear             Clear terminal buffer
-                          exit / q          Exit Radare2 mode back to shell
+                          exit / q          Close r2 session and return to shell
                         """.trimIndent(),
                         isError = false,
                         isR2Command = true
                     ),
-                    nextR2Mode = true
+                    nextR2Mode = true,
+                    nextSeekHex = currentSeekHex
                 )
             }
 
             val r2Query = if (cmd == "r2" && arg.isNotBlank()) arg else line
-            val r2Entry = runR2WithProgress(
+            val (r2Entry, updatedSeek) = runR2WithProgress(
                 displayCommand = r2Query,
                 r2Query = r2Query,
                 activeFile = activeFile,
+                sessionId = sessionId,
                 onUpdate = onUpdate
             )
-            return ConsoleTurnOutcome(entry = r2Entry, nextR2Mode = true)
+            return ConsoleTurnOutcome(
+                entry = r2Entry,
+                nextR2Mode = true,
+                nextSeekHex = updatedSeek
+            )
         }
 
         return when (cmd) {
@@ -118,13 +147,13 @@ class EngineConsoleRunner(
                     command = line,
                     output = """
                     RE FORGE Workstation Shell
-                      r2                    Enter sticky Radare2 interactive mode (r2 [0x00000000]>)
-                      r2 <cmd>              Run Radare2 command & stay in r2 mode (e.g. r2 aaa)
+                      r2                    Enter persistent Radare2 interactive session
+                      r2 <cmd>              Run Radare2 command & stay in persistent r2 session
                       elf                   Parse ELF64/32 headers, sections, and symbols
                       capstone <arch> <off> Disassemble 64 bytes (arm64, arm, x86_64, x86)
                       hash                  Compute SHA-256, SHA-1, MD5, CRC32 of active target
                       engines               List all engines and ON/OFF status
-                      save                  Save latest dump output to device storage
+                      save                  Save latest dump output straight to RE FORGE folder
                       clear                 Clear terminal buffer
                     """.trimIndent(),
                     isError = false
@@ -140,24 +169,30 @@ class EngineConsoleRunner(
                     )
                 }
                 if (arg.isBlank()) {
-                    val targetName = activeFile?.name ?: "none (load target from Home)"
+                    val targetName = activeFile?.name ?: "none (load target from Home or RE FORGE)"
                     return ConsoleTurnOutcome(
                         entry = ConsoleEntry(
                             command = line,
-                            output = "[r2] Entered Radare2 interactive mode.\n[r2] Active target: $targetName\n[r2] Type commands directly (e.g. aaa, AA, afl, ij, pdf @ main) or 'exit' to leave.",
+                            output = "[r2] Entered persistent Radare2 session ($sessionId).\n[r2] Active target: $targetName\n[r2] Analysis state stays in memory across commands. Type 'aaa', 'afl', 'ij', or 'exit'.",
                             isError = false,
                             isR2Command = true
                         ),
-                        nextR2Mode = true
+                        nextR2Mode = true,
+                        nextSeekHex = "0x00000000"
                     )
                 }
-                val r2Entry = runR2WithProgress(
+                val (r2Entry, updatedSeek) = runR2WithProgress(
                     displayCommand = line,
                     r2Query = arg,
                     activeFile = activeFile,
+                    sessionId = sessionId,
                     onUpdate = onUpdate
                 )
-                ConsoleTurnOutcome(entry = r2Entry, nextR2Mode = true)
+                ConsoleTurnOutcome(
+                    entry = r2Entry,
+                    nextR2Mode = true,
+                    nextSeekHex = updatedSeek
+                )
             }
 
             "engines" -> {
@@ -169,7 +204,7 @@ class EngineConsoleRunner(
 
             "hash" -> {
                 val target = activeFile
-                    ?: return ConsoleTurnOutcome(ConsoleEntry(line, "No active workspace file loaded. Open a target from Home first.", isError = true), false)
+                    ?: return ConsoleTurnOutcome(ConsoleEntry(line, "No active workspace file loaded. Open a target from Home or RE FORGE first.", isError = true), false)
                 val report = HashCalculator.computeReport(target)
                 val text = """
                 File   : ${report.fileName} (${report.fileSize} bytes)
@@ -255,10 +290,11 @@ class EngineConsoleRunner(
         displayCommand: String,
         r2Query: String,
         activeFile: File?,
+        sessionId: String,
         onUpdate: ((ConsoleEntry) -> Unit)?
-    ): ConsoleEntry {
+    ): Pair<ConsoleEntry, String> {
         if (!engineRegistry.isEngineEnabled("radare2_core")) {
-            return ConsoleEntry(displayCommand, "Radare2 engine is OFF. Enable it in the Engines tab.", isError = true, isR2Command = true)
+            return ConsoleEntry(displayCommand, "Radare2 engine is OFF. Enable it in the Engines tab.", isError = true, isR2Command = true) to "0x00000000"
         }
         val entryId = System.nanoTime()
         val targetLabel = activeFile?.name ?: "no-file"
@@ -268,7 +304,7 @@ class EngineConsoleRunner(
         }
 
         val startBanner = if (isAnalysis) {
-            "[r2] Starting deep binary analysis ($r2Query) on '$targetLabel'...\n[r2] Please wait, analyzing functions, xrefs & strings..."
+            "[r2] Deep analysis ($r2Query) started on '$targetLabel' (unlimited time, state retained in session)..."
         } else {
             "[r2] Executing '$r2Query' on '$targetLabel'..."
         }
@@ -287,7 +323,7 @@ class EngineConsoleRunner(
             )
         )
 
-        val res = radare2Bridge.executeCommandStreaming(activeFile, r2Query) { progressLine ->
+        val res = radare2Bridge.executeCommandStreaming(activeFile, r2Query, sessionId) { progressLine ->
             if (progressLine.startsWith("[r2:progress]")) {
                 latestTicker = progressLine
             } else if (progressLine.isNotBlank()) {
@@ -323,12 +359,12 @@ class EngineConsoleRunner(
         val elapsedSec = String.format(Locale.US, "%.2fs", res.durationMs / 1000.0)
         val statusFooter = if (res.success) {
             if (isAnalysis) {
-                "[r2] Analysis ($r2Query) COMPLETED in $elapsedSec. Ready for next command (e.g. afl, pdf @ main, izz)."
+                "[r2] Analysis ($r2Query) COMPLETED in $elapsedSec. Functions & xrefs cached in this session."
             } else {
-                "[r2] Done in $elapsedSec (exit 0)."
+                "[r2] Done in $elapsedSec (seek ${res.currentSeekHex})."
             }
         } else {
-            "[r2] Failed after $elapsedSec (exit ${res.exitCode})."
+            "[r2] Stopped/Failed after $elapsedSec (exit ${res.exitCode})."
         }
 
         val finalOutput = buildString {
@@ -351,6 +387,6 @@ class EngineConsoleRunner(
             isRunning = false,
             isR2Command = true,
             id = entryId
-        )
+        ) to res.currentSeekHex
     }
 }

@@ -1,20 +1,22 @@
 package org.bimz.reforge.ui.screens
 
-import android.net.Uri
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
+import android.content.ClipData
+import android.content.ClipboardManager
+import android.content.Context
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -26,13 +28,17 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
+import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.ClearAll
+import androidx.compose.material.icons.outlined.Add
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.ContentCopy
+import androidx.compose.material.icons.outlined.DeleteSweep
 import androidx.compose.material.icons.outlined.PlayArrow
-import androidx.compose.material.icons.outlined.Save
+import androidx.compose.material.icons.outlined.SaveAlt
+import androidx.compose.material.icons.outlined.StopCircle
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -45,394 +51,462 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.platform.LocalClipboardManager
-import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import org.bimz.reforge.ui.components.BadgeTone
-import org.bimz.reforge.ui.components.StatusPill
-import org.bimz.reforge.ui.navigation.LocalBottomClearance
-import org.bimz.reforge.ui.state.WorkstationUiState
-import org.bimz.reforge.ui.state.WorkstationViewModel
+import org.bimz.reforge.terminal.ConsoleEntry
+import org.bimz.reforge.ui.WorkstationUiState
+import org.bimz.reforge.ui.theme.AmberWarn
+import org.bimz.reforge.ui.theme.BorderSubtle
+import org.bimz.reforge.ui.theme.CyanAccent
+import org.bimz.reforge.ui.theme.EmeraldOk
+import org.bimz.reforge.ui.theme.ObsidianBg
+import org.bimz.reforge.ui.theme.ObsidianElevated
+import org.bimz.reforge.ui.theme.ObsidianSurface
+import org.bimz.reforge.ui.theme.RoseDanger
+import org.bimz.reforge.ui.theme.TextMuted
+import org.bimz.reforge.ui.theme.TextPrimary
+import org.bimz.reforge.ui.theme.TextSecondary
 
 @Composable
 fun ToolsScreen(
     state: WorkstationUiState,
-    viewModel: WorkstationViewModel
+    onRunCommand: (String) -> Unit,
+    onExitR2Mode: () -> Unit,
+    onStopCommand: () -> Unit,
+    onAddSession: () -> Unit,
+    onSelectSession: (String) -> Unit,
+    onCloseSession: (String) -> Unit,
+    onSaveDumpToForge: (String) -> Unit,
+    onOpenSavedFolder: () -> Unit
 ) {
-    var commandText by remember { mutableStateOf("") }
-    var copiedNotice by remember { mutableStateOf<String?>(null) }
-    var textToSave by remember { mutableStateOf<String?>(null) }
+    var input by remember { mutableStateOf("") }
+    val activeSession = state.activeSession
+    val isR2Mode = activeSession.r2Mode
     val listState = rememberLazyListState()
-    val clipboard = LocalClipboardManager.current
-    val bottomClearance = LocalBottomClearance.current
+    val context = LocalContext.current
 
-    val saveDumpLauncher = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.CreateDocument("text/plain")
-    ) { uri: Uri? ->
-        val payload = textToSave
-        if (uri != null && payload != null) {
-            viewModel.exportTextToUri(uri, payload)
-            copiedNotice = "Dump saved to device storage."
+    val promptPrefix = if (isR2Mode) "r2 [${activeSession.currentSeekHex}]>" else "reforge@arm64:~$"
+    val promptColor = if (isR2Mode) AmberWarn else CyanAccent
+
+    val quickChips = if (isR2Mode) {
+        listOf("aaa", "AA", "afl", "ij", "iSj", "isj", "izz", "pdf @ main")
+    } else {
+        listOf("r2", "r2 aaa", "r2 afl", "elf", "hash", "engines", "help")
+    }
+
+    val lastSnapshotLen = activeSession.history.lastOrNull()?.output?.length ?: 0
+    LaunchedEffect(activeSession.id, activeSession.history.size, lastSnapshotLen) {
+        if (activeSession.history.isNotEmpty()) {
+            listState.animateScrollToItem(activeSession.history.lastIndex)
         }
-        textToSave = null
-    }
-
-    LaunchedEffect(state.pendingDumpSaveText) {
-        val pending = state.pendingDumpSaveText
-        if (pending != null) {
-            textToSave = pending
-            viewModel.clearPendingDumpSave()
-            saveDumpLauncher.launch(state.pendingDumpSaveFilename)
-        }
-    }
-
-    val r2Engine = state.engines.firstOrNull { it.id == "radare2_core" }
-    val r2Ready = r2Engine?.enabled == true && r2Engine.initialized
-    val inR2Mode = state.r2SessionActive
-
-    val termBg = Color(0xFF090C10)
-    val termBarBg = Color(0xFF11161F)
-    val termBorder = Color(0xFF263142)
-    val promptGreen = Color(0xFF4ADE80)
-    val promptR2 = Color(0xFFFBBF24)
-    val promptPath = Color(0xFF38BDF8)
-    val termStdout = Color(0xFFE2E8F0)
-    val termStderr = Color(0xFFF87171)
-
-    LaunchedEffect(state.consoleHistory.size, state.consoleHistory.lastOrNull()?.output, bottomClearance) {
-        if (state.consoleHistory.isNotEmpty()) {
-            listState.animateScrollToItem(state.consoleHistory.size)
-        }
-    }
-
-    fun submitCommand(raw: String) {
-        val trimmed = raw.trim()
-        if (trimmed.isEmpty()) return
-        copiedNotice = null
-        viewModel.runConsoleCommand(trimmed)
-        commandText = ""
-    }
-
-    fun triggerSaveEntry(commandLabel: String, outputText: String) {
-        val baseName = (state.activeProject?.originalFileName ?: "reforge").replace(Regex("[^a-zA-Z0-9._-]"), "_")
-        val safeCmd = commandLabel.replace(Regex("[^a-zA-Z0-9_-]"), "_").take(24)
-        textToSave = "# Target: ${state.activeProject?.originalFileName ?: "none"}\n# Command: $commandLabel\n\n$outputText"
-        saveDumpLauncher.launch("${baseName}_${safeCmd}_dump.txt")
     }
 
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(
-                start = 10.dp,
-                end = 10.dp,
-                top = 8.dp,
-                bottom = bottomClearance
-            )
+            .background(ObsidianBg)
+            .imePadding()
+            .padding(horizontal = 12.dp, vertical = 10.dp)
     ) {
         Surface(
             modifier = Modifier
-                .weight(1f)
-                .fillMaxWidth(),
-            shape = RoundedCornerShape(12.dp),
-            color = termBg,
-            border = BorderStroke(1.dp, if (inR2Mode) promptR2.copy(alpha = 0.5f) else termBorder)
+                .fillMaxWidth()
+                .weight(1f),
+            shape = RoundedCornerShape(14.dp),
+            color = Color(0xFF070A0F),
+            border = BorderStroke(
+                1.dp,
+                if (isR2Mode) AmberWarn.copy(alpha = 0.5f) else BorderSubtle
+            )
         ) {
             Column(modifier = Modifier.fillMaxSize()) {
-                // Termux / Radare2 Session Header Bar
+                // Row 1: Multi-Session Tab Bar
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(termBarBg)
-                        .padding(horizontal = 10.dp, vertical = 4.dp),
-                    horizontalArrangement = Arrangement.SpaceBetween,
+                        .background(Color(0xFF0A0F17))
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text(
-                            text = if (inR2Mode) "r2@arm64" else "termux@reforge",
-                            style = MaterialTheme.typography.labelMedium.copy(
+                    Row(
+                        modifier = Modifier
+                            .weight(1f)
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        state.terminalSessions.forEach { session ->
+                            val selected = session.id == activeSession.id
+                            val tabBorder = when {
+                                selected && session.r2Mode -> AmberWarn.copy(alpha = 0.7f)
+                                selected -> CyanAccent.copy(alpha = 0.7f)
+                                else -> BorderSubtle
+                            }
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = if (selected) ObsidianElevated else ObsidianSurface,
+                                border = BorderStroke(1.dp, tabBorder),
+                                modifier = Modifier.clickable { onSelectSession(session.id) }
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
+                                    verticalAlignment = Alignment.CenterVertically
+                                ) {
+                                    Text(
+                                        text = if (session.r2Mode) "${session.title} • r2" else session.title,
+                                        color = if (selected) (if (session.r2Mode) AmberWarn else CyanAccent) else TextSecondary,
+                                        fontFamily = FontFamily.Monospace,
+                                        fontSize = 11.sp,
+                                        fontWeight = if (selected) FontWeight.Bold else FontWeight.Medium
+                                    )
+                                    if (state.terminalSessions.size > 1) {
+                                        Spacer(modifier = Modifier.width(6.dp))
+                                        Icon(
+                                            imageVector = Icons.Outlined.Close,
+                                            contentDescription = "Close session",
+                                            tint = TextMuted,
+                                            modifier = Modifier
+                                                .size(13.dp)
+                                                .clickable { onCloseSession(session.id) }
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Surface(
+                        shape = RoundedCornerShape(8.dp),
+                        color = CyanAccent.copy(alpha = 0.14f),
+                        border = BorderStroke(1.dp, CyanAccent.copy(alpha = 0.45f)),
+                        modifier = Modifier.clickable { onAddSession() }
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Outlined.Add, contentDescription = "New Session", tint = CyanAccent, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(2.dp))
+                            Text("Session", color = CyanAccent, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                        }
+                    }
+                }
+
+                // Row 2: Active Session Status & Actions
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(ObsidianSurface)
+                        .padding(horizontal = 12.dp, vertical = 7.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = if (isR2Mode) "r2@${activeSession.currentSeekHex}" else "shell@arm64",
+                        color = promptColor,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    if (activeSession.isRunning) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = RoseDanger.copy(alpha = 0.16f),
+                            border = BorderStroke(1.dp, RoseDanger.copy(alpha = 0.55f)),
+                            modifier = Modifier.clickable { onStopCommand() }
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Outlined.StopCircle, contentDescription = "Stop", tint = RoseDanger, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(4.dp))
+                                Text("STOP", color = RoseDanger, fontSize = 10.sp, fontFamily = FontFamily.Monospace, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    } else if (isR2Mode) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = AmberWarn.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, AmberWarn.copy(alpha = 0.45f))
+                        ) {
+                            Text(
+                                text = "PERSISTENT r2",
+                                color = AmberWarn,
+                                fontSize = 10.sp,
                                 fontFamily = FontFamily.Monospace,
-                                fontWeight = FontWeight.Bold
-                            ),
-                            color = if (inR2Mode) promptR2 else promptGreen
-                        )
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 7.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Spacer(modifier = Modifier.weight(1f))
+                    if (isR2Mode) {
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = RoseDanger.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, RoseDanger.copy(alpha = 0.45f)),
+                            modifier = Modifier.clickable { onExitR2Mode() }
+                        ) {
+                            Text(
+                                text = "Exit r2",
+                                color = RoseDanger,
+                                fontSize = 10.sp,
+                                fontFamily = FontFamily.Monospace,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
+                            )
+                        }
                         Spacer(modifier = Modifier.width(6.dp))
-                        StatusPill(
-                            label = if (inR2Mode) "r2 SESSION" else if (r2Ready) "r2 READY" else "r2 OFF",
-                            tone = if (inR2Mode) BadgeTone.WARNING else if (r2Ready) BadgeTone.PASS else BadgeTone.NEUTRAL
+                    }
+                    IconButton(
+                        onClick = { onSaveDumpToForge("") },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.SaveAlt,
+                            contentDescription = "Save dump to RE FORGE",
+                            tint = CyanAccent,
+                            modifier = Modifier.size(16.dp)
                         )
                     }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        if (inR2Mode) {
-                            Surface(
-                                onClick = { viewModel.exitR2Session() },
-                                shape = RoundedCornerShape(6.dp),
-                                color = Color(0xFF291D16),
-                                border = BorderStroke(1.dp, promptR2.copy(alpha = 0.6f))
-                            ) {
-                                Text(
-                                    text = "Exit r2",
-                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                                    color = promptR2,
-                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                                )
-                            }
-                            Spacer(modifier = Modifier.width(4.dp))
-                        }
-                        IconButton(
-                            onClick = {
-                                if (state.consoleHistory.isNotEmpty()) {
-                                    val fullLog = state.consoleHistory.joinToString("\n\n") {
-                                        "$ ${it.command}\n${it.output}"
-                                    }
-                                    triggerSaveEntry("session", fullLog)
-                                }
-                            },
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.Save,
-                                contentDescription = "Save all terminal dumps",
-                                tint = promptPath
-                            )
-                        }
-                        IconButton(
-                            onClick = { viewModel.runConsoleCommand("clear") },
-                            modifier = Modifier.size(38.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Outlined.ClearAll,
-                                contentDescription = "Clear terminal",
-                                tint = Color(0xFF94A3B8)
-                            )
-                        }
+                    IconButton(
+                        onClick = { onRunCommand("clear") },
+                        modifier = Modifier.size(28.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.DeleteSweep,
+                            contentDescription = "Clear buffer",
+                            tint = TextSecondary,
+                            modifier = Modifier.size(16.dp)
+                        )
                     }
                 }
 
                 // Terminal Buffer
-                LazyColumn(
-                    state = listState,
-                    modifier = Modifier
-                        .weight(1f)
-                        .fillMaxWidth()
-                        .padding(horizontal = 12.dp, vertical = 8.dp),
-                    verticalArrangement = Arrangement.spacedBy(12.dp)
-                ) {
-                    item(key = "motd") {
-                        Column {
-                            Text(
-                                text = "Welcome to RE FORGE Terminal (Radare2 ARM64)",
-                                style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
-                                color = promptGreen
+                SelectionContainer(modifier = Modifier.weight(1f)) {
+                    LazyColumn(
+                        state = listState,
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 12.dp, vertical = 8.dp),
+                        verticalArrangement = Arrangement.spacedBy(10.dp)
+                    ) {
+                        items(activeSession.history, key = { it.id }) { entry ->
+                            ConsoleEntryBlock(
+                                entry = entry,
+                                onCopy = {
+                                    val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                    cb.setPrimaryClip(ClipData.newPlainText("r2_output", entry.output))
+                                },
+                                onSaveDump = {
+                                    val payload = "# Command: ${entry.command}\n# Target: ${state.activeFile?.name ?: "none"}\n\n${entry.output}"
+                                    onSaveDumpToForge(payload)
+                                },
+                                onOpenSavedFolder = onOpenSavedFolder
                             )
-                            Text(
-                                text = "Target: ${state.activeProject?.originalFileName ?: "none (open from Home)"}",
-                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                                color = Color(0xFF94A3B8)
-                            )
-                            Text(
-                                text = "Tip: Type 'r2' to lock into Radare2 mode, then run 'aaa', 'AA', 'afl', 'pdf @ main', etc.",
-                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                                color = Color(0xFF94A3B8)
-                            )
-                            if (copiedNotice != null) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Text(
-                                    text = copiedNotice.orEmpty(),
-                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                                    color = promptPath
-                                )
-                            }
-                        }
-                    }
-
-                    items(state.consoleHistory, key = { it.id }) { entry ->
-                        Column(modifier = Modifier.fillMaxWidth()) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                if (entry.isR2Command) {
-                                    Text(
-                                        text = "r2 [0x00000000]> ",
-                                        style = MaterialTheme.typography.labelMedium.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = promptR2
-                                    )
-                                } else {
-                                    Text(
-                                        text = "~/workspace ",
-                                        style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
-                                        color = promptPath
-                                    )
-                                    Text(
-                                        text = "$ ",
-                                        style = MaterialTheme.typography.labelMedium.copy(
-                                            fontFamily = FontFamily.Monospace,
-                                            fontWeight = FontWeight.Bold
-                                        ),
-                                        color = promptGreen
-                                    )
-                                }
-                                Text(
-                                    text = entry.command,
-                                    style = MaterialTheme.typography.labelMedium.copy(
-                                        fontFamily = FontFamily.Monospace,
-                                        fontWeight = FontWeight.SemiBold
-                                    ),
-                                    color = Color.White
-                                )
-                            }
-                            Spacer(modifier = Modifier.height(3.dp))
-                            Text(
-                                text = entry.output,
-                                style = MaterialTheme.typography.labelSmall.copy(
-                                    fontFamily = FontFamily.Monospace,
-                                    lineHeight = 16.sp
-                                ),
-                                color = when {
-                                    entry.isRunning -> promptR2
-                                    entry.isError -> termStderr
-                                    else -> termStdout
-                                }
-                            )
-                            if (!entry.isRunning && entry.output.isNotBlank()) {
-                                Spacer(modifier = Modifier.height(4.dp))
-                                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                                    Surface(
-                                        onClick = {
-                                            clipboard.setText(AnnotatedString(entry.output))
-                                            copiedNotice = "Copied output of '${entry.command}'."
-                                        },
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = Color(0xFF161E2B),
-                                        border = BorderStroke(1.dp, termBorder)
-                                    ) {
-                                        Text(
-                                            text = "Copy",
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 10.sp
-                                            ),
-                                            color = Color(0xFF94A3B8),
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                    Surface(
-                                        onClick = { triggerSaveEntry(entry.command, entry.output) },
-                                        shape = RoundedCornerShape(4.dp),
-                                        color = Color(0xFF162332),
-                                        border = BorderStroke(1.dp, promptPath.copy(alpha = 0.45f))
-                                    ) {
-                                        Text(
-                                            text = "Save Dump",
-                                            style = MaterialTheme.typography.labelSmall.copy(
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 10.sp
-                                            ),
-                                            color = promptPath,
-                                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                        )
-                                    }
-                                }
-                            }
                         }
                     }
                 }
 
-                // Dynamic Extra-Keys Bar (switches automatically between Shell keys and Sticky r2 keys)
-                val quickKeys = if (inR2Mode) {
-                    listOf("aaa", "AA", "afl", "ij", "iSj", "isj", "izz", "pdf @ main", "px 64", "save", "exit")
-                } else {
-                    listOf("r2", "r2 aaa", "r2 AA", "r2 afl", "r2 ij", "elf", "capstone arm64 0", "hash", "save", "clear")
-                }
-
+                // Quick Command Chips
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(termBarBg)
+                        .background(ObsidianSurface.copy(alpha = 0.8f))
                         .horizontalScroll(rememberScrollState())
-                        .padding(horizontal = 8.dp, vertical = 4.dp),
+                        .padding(horizontal = 10.dp, vertical = 6.dp),
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
-                    quickKeys.forEach { keyCmd ->
+                    quickChips.forEach { chip ->
                         Surface(
-                            onClick = { submitCommand(keyCmd) },
-                            shape = RoundedCornerShape(6.dp),
-                            color = if (inR2Mode) Color(0xFF1E1B16) else Color(0xFF1A2230),
-                            border = BorderStroke(1.dp, if (inR2Mode) promptR2.copy(alpha = 0.4f) else termBorder),
-                            modifier = Modifier.defaultMinSize(minWidth = 44.dp, minHeight = 38.dp)
-                        ) {
-                            Box(
-                                contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = keyCmd,
-                                    style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
-                                    color = if (inR2Mode) promptR2 else termStdout
-                                )
+                            shape = RoundedCornerShape(7.dp),
+                            color = ObsidianElevated,
+                            border = BorderStroke(
+                                1.dp,
+                                if (isR2Mode) AmberWarn.copy(alpha = 0.35f) else BorderSubtle
+                            ),
+                            modifier = Modifier.clickable {
+                                if (!activeSession.isRunning) {
+                                    onRunCommand(chip)
+                                }
                             }
+                        ) {
+                            Text(
+                                text = chip,
+                                color = if (isR2Mode) AmberWarn else CyanAccent,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 11.sp,
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp)
+                            )
                         }
                     }
                 }
 
-                // Bottom Prompt Input Line (shows `r2 [0x00000000]>` when inside r2 session)
+                // Prompt Input Line
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF0D1117))
-                        .padding(horizontal = 12.dp, vertical = 4.dp),
+                        .background(ObsidianElevated)
+                        .padding(horizontal = 12.dp, vertical = 9.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = if (inR2Mode) "r2 [0x00000000]> " else "$ ",
-                        style = MaterialTheme.typography.bodyMedium.copy(
-                            fontFamily = FontFamily.Monospace,
-                            fontWeight = FontWeight.Bold
-                        ),
-                        color = if (inR2Mode) promptR2 else promptGreen
+                        text = promptPrefix,
+                        color = promptColor,
+                        fontFamily = FontFamily.Monospace,
+                        fontSize = 12.sp,
+                        fontWeight = FontWeight.Bold
                     )
-                    BasicTextField(
-                        value = commandText,
-                        onValueChange = { commandText = it },
-                        singleLine = true,
-                        textStyle = MaterialTheme.typography.bodyMedium.copy(
-                            fontFamily = FontFamily.Monospace,
-                            color = Color.White
-                        ),
-                        cursorBrush = SolidColor(if (inR2Mode) promptR2 else promptGreen),
-                        keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
-                        keyboardActions = KeyboardActions(onSend = { submitCommand(commandText) }),
-                        modifier = Modifier
-                            .weight(1f)
-                            .defaultMinSize(minHeight = 44.dp)
-                            .padding(vertical = 10.dp),
-                        decorationBox = { innerTextField ->
-                            if (commandText.isEmpty()) {
-                                Text(
-                                    text = if (inR2Mode) "aaa | AA | afl | pdf @ main | exit" else "r2 | elf | hash ...",
-                                    style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
-                                    color = Color(0xFF64748B)
-                                )
-                            }
-                            innerTextField()
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Box(modifier = Modifier.weight(1f)) {
+                        if (input.isEmpty()) {
+                            Text(
+                                text = if (isR2Mode) "aaa | AA | afl | pdf @ main | exit" else "r2 | elf | hash | save",
+                                color = TextMuted,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp
+                            )
                         }
-                    )
-                    IconButton(
-                        onClick = { submitCommand(commandText) },
-                        modifier = Modifier.size(44.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Outlined.PlayArrow,
-                            contentDescription = "Execute command",
-                            tint = if (inR2Mode) promptR2 else promptGreen
+                        BasicTextField(
+                            value = input,
+                            onValueChange = { input = it },
+                            singleLine = true,
+                            textStyle = TextStyle(
+                                color = TextPrimary,
+                                fontFamily = FontFamily.Monospace,
+                                fontSize = 12.sp
+                            ),
+                            cursorBrush = SolidColor(promptColor),
+                            keyboardOptions = KeyboardOptions(imeAction = ImeAction.Send),
+                            keyboardActions = KeyboardActions(onSend = {
+                                if (input.isNotBlank() && !activeSession.isRunning) {
+                                    val cmd = input
+                                    input = ""
+                                    onRunCommand(cmd)
+                                }
+                            }),
+                            modifier = Modifier.fillMaxWidth()
                         )
                     }
+                    if (activeSession.isRunning) {
+                        IconButton(
+                            onClick = onStopCommand,
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.StopCircle,
+                                contentDescription = "Stop command",
+                                tint = RoseDanger
+                            )
+                        }
+                    } else {
+                        IconButton(
+                            onClick = {
+                                if (input.isNotBlank()) {
+                                    val cmd = input
+                                    input = ""
+                                    onRunCommand(cmd)
+                                }
+                            },
+                            modifier = Modifier.size(30.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.PlayArrow,
+                                contentDescription = "Execute",
+                                tint = promptColor
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        Spacer(modifier = Modifier.height(74.dp))
+    }
+}
+
+@Composable
+private fun ConsoleEntryBlock(
+    entry: ConsoleEntry,
+    onCopy: () -> Unit,
+    onSaveDump: () -> Unit,
+    onOpenSavedFolder: () -> Unit
+) {
+    Column(modifier = Modifier.fillMaxWidth()) {
+        if (entry.command != "session" && entry.command != "target") {
+            Text(
+                text = if (entry.isR2Command) "r2> ${entry.command}" else "$ ${entry.command}",
+                color = if (entry.isR2Command) AmberWarn else CyanAccent,
+                fontFamily = FontFamily.Monospace,
+                fontSize = 12.sp,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(3.dp))
+        }
+        Text(
+            text = entry.output,
+            color = when {
+                entry.isError -> RoseDanger
+                entry.isRunning -> AmberWarn
+                entry.command == "session" || entry.command == "target" -> EmeraldOk
+                else -> TextPrimary
+            },
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.5.sp,
+            lineHeight = 16.sp
+        )
+        if (!entry.isRunning && entry.output.length > 24 && entry.command != "session" && entry.command != "target") {
+            Spacer(modifier = Modifier.height(5.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = ObsidianSurface,
+                    border = BorderStroke(1.dp, BorderSubtle),
+                    modifier = Modifier.clickable { onCopy() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = null, tint = TextSecondary, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Copy", color = TextSecondary, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = CyanAccent.copy(alpha = 0.12f),
+                    border = BorderStroke(1.dp, CyanAccent.copy(alpha = 0.45f)),
+                    modifier = Modifier.clickable { onSaveDump() }
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Outlined.SaveAlt, contentDescription = null, tint = CyanAccent, modifier = Modifier.size(12.dp))
+                        Spacer(modifier = Modifier.width(4.dp))
+                        Text("Save to RE FORGE", color = CyanAccent, fontSize = 10.sp, fontFamily = FontFamily.Monospace)
+                    }
+                }
+                Surface(
+                    shape = RoundedCornerShape(6.dp),
+                    color = ObsidianSurface,
+                    border = BorderStroke(1.dp, BorderSubtle),
+                    modifier = Modifier.clickable { onOpenSavedFolder() }
+                ) {
+                    Text(
+                        text = "Open Vault",
+                        color = EmeraldOk,
+                        fontSize = 10.sp,
+                        fontFamily = FontFamily.Monospace,
+                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                    )
                 }
             }
         }

@@ -1,69 +1,59 @@
 plugins {
-    alias(libs.plugins.android.application)
-    alias(libs.plugins.kotlin.android)
-    alias(libs.plugins.kotlin.compose)
+    id("com.android.application")
+    id("org.jetbrains.kotlin.android")
 }
 
 android {
     namespace = "org.bimz.reforge"
-    compileSdk = 35
+    compileSdk = 34
 
     defaultConfig {
         applicationId = "org.bimz.reforge"
         minSdk = 26
-        targetSdk = 35
+        targetSdk = 34
         versionCode = 1
         versionName = "1.0.0"
 
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-
         ndk {
-            abiFilters += listOf("arm64-v8a")
+            abiFilters += listOf("arm64-v8a", "armeabi-v7a")
         }
+    }
 
-        externalNativeBuild {
-            cmake {
-                cppFlags += listOf("-std=c++20", "-O2", "-fvisibility=hidden")
-                arguments += listOf("-DANDROID_STL=c++_shared", "-DANDROID_SUPPORT_FLEXIBLE_PAGE_SIZES=ON")
-                val capstoneDir = project.findProperty("CAPSTONE_SRC_DIR")?.toString()
-                    ?: System.getenv("CAPSTONE_SRC_DIR")
-                if (!capstoneDir.isNullOrBlank()) {
-                    arguments += "-DCAPSTONE_SRC_DIR=$capstoneDir"
-                }
+    signingConfigs {
+        create("reforgePersistent") {
+            val envPath = System.getenv("REFORGE_KEYSTORE_PATH")
+            val localKs = file("reforge-signing.jks")
+            if (!envPath.isNullOrBlank() && file(envPath).exists()) {
+                storeFile = file(envPath)
+                storePassword = System.getenv("REFORGE_KEYSTORE_PASS") ?: "reforge_signing_key_2026"
+                keyAlias = System.getenv("REFORGE_KEY_ALIAS") ?: "reforge"
+                keyPassword = System.getenv("REFORGE_KEY_PASS") ?: "reforge_signing_key_2026"
+            } else if (localKs.exists()) {
+                storeFile = localKs
+                storePassword = "reforge_signing_key_2026"
+                keyAlias = "reforge"
+                keyPassword = "reforge_signing_key_2026"
             }
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path = file("../native/CMakeLists.txt")
-            version = "3.22.1"
-        }
-    }
-
     buildTypes {
-        debug {
-            applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
+        getByName("debug") {
             isMinifyEnabled = false
+            val sc = signingConfigs.findByName("reforgePersistent")
+            if (sc?.storeFile?.exists() == true) {
+                signingConfig = sc
+            }
         }
-        release {
+        getByName("release") {
             isMinifyEnabled = false
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
             )
-            val ksPath = System.getenv("REFORGE_KEYSTORE_PATH")
-            if (!ksPath.isNullOrBlank() && file(ksPath).exists()) {
-                signingConfigs {
-                    create("ciRelease") {
-                        storeFile = file(ksPath)
-                        storePassword = System.getenv("REFORGE_KEYSTORE_PASSWORD") ?: ""
-                        keyAlias = System.getenv("REFORGE_KEY_ALIAS") ?: ""
-                        keyPassword = System.getenv("REFORGE_KEY_PASSWORD") ?: ""
-                    }
-                }
-                signingConfig = signingConfigs.getByName("ciRelease")
+            val sc = signingConfigs.findByName("reforgePersistent")
+            if (sc?.storeFile?.exists() == true) {
+                signingConfig = sc
             }
         }
     }
@@ -71,7 +61,6 @@ android {
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
-        isCoreLibraryDesugaringEnabled = true
     }
 
     kotlinOptions {
@@ -83,73 +72,39 @@ android {
         buildConfig = true
     }
 
+    composeOptions {
+        kotlinCompilerExtensionVersion = "1.5.14"
+    }
+
     packaging {
         jniLibs {
             useLegacyPackaging = true
         }
         resources {
-            excludes += listOf(
-                "META-INF/LICENSE*",
-                "META-INF/NOTICE*",
-                "META-INF/DEPENDENCIES",
-                "META-INF/*.kotlin_module"
-            )
-        }
-    }
-
-    testOptions {
-        unitTests.all {
-            it.testLogging {
-                events("failed", "standardError")
-                exceptionFormat = org.gradle.api.tasks.testing.logging.TestExceptionFormat.FULL
-                showExceptions = true
-                showCauses = true
-                showStackTraces = true
-            }
-        }
-        unitTests {
-            isIncludeAndroidResources = true
-            isReturnDefaultValues = true
+            excludes += "/META-INF/{AL2.0,LGPL2.1}"
         }
     }
 }
 
 dependencies {
-    coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.3")
-
-    implementation(project(":core"))
+    implementation(project(":core-utils"))
     implementation(project(":engine-registry"))
-    implementation(project(":storage"))
-    implementation(project(":filemanager"))
-    implementation(project(":apk-inspector"))
-    implementation(project(":dex-analysis"))
-    implementation(project(":resource-inspector"))
-    implementation(project(":binary-analysis"))
-    implementation(project(":hex-viewer"))
-    implementation(project(":patch-workspace"))
-    implementation(project(":rebuild-engine"))
-    implementation(project(":signing-engine"))
+    implementation(project(":binary-analyzer"))
+    implementation(project(":hex-editor"))
     implementation(project(":terminal-interface"))
 
-    implementation(libs.androidx.core.ktx)
-    implementation(libs.androidx.lifecycle.runtime.ktx)
-    implementation(libs.androidx.lifecycle.viewmodel.compose)
-    implementation(libs.androidx.activity.compose)
-    implementation(libs.androidx.navigation.compose)
-    implementation(platform(libs.androidx.compose.bom))
-    implementation(libs.androidx.compose.ui)
-    implementation(libs.androidx.compose.ui.graphics)
-    implementation(libs.androidx.compose.ui.tooling.preview)
-    implementation(libs.androidx.compose.material3)
-    implementation(libs.androidx.compose.material.icons)
-    implementation(libs.kotlinx.coroutines.android)
+    implementation("androidx.core:core-ktx:1.13.1")
+    implementation("androidx.lifecycle:lifecycle-runtime-ktx:2.8.4")
+    implementation("androidx.lifecycle:lifecycle-viewmodel-compose:2.8.4")
+    implementation("androidx.activity:activity-compose:1.9.1")
 
-    testImplementation(libs.junit)
-    testImplementation(libs.robolectric)
-    testImplementation(libs.kotlinx.coroutines.test)
-    testImplementation(libs.android.smali.dexlib2)
-    testImplementation(libs.android.smali.assembler)
-    testImplementation(libs.android.apksig)
-    androidTestImplementation(libs.androidx.test.junit)
-    androidTestImplementation(libs.androidx.test.espresso)
+    val composeBom = platform("androidx.compose:compose-bom:2024.06.00")
+    implementation(composeBom)
+    implementation("androidx.compose.ui:ui")
+    implementation("androidx.compose.ui:ui-graphics")
+    implementation("androidx.compose.ui:ui-tooling-preview")
+    implementation("androidx.compose.material3:material3")
+    implementation("androidx.compose.material:material-icons-extended")
+    implementation("androidx.navigation:navigation-compose:2.7.7")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1")
 }

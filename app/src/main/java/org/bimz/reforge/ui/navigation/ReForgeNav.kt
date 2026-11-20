@@ -1,288 +1,345 @@
 package org.bimz.reforge.ui.navigation
 
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateColorAsState
-import androidx.compose.animation.core.tween
-import androidx.compose.animation.expandVertically
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.shrinkVertically
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.defaultMinSize
+import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.layout.navigationBars
+import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBars
-import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.layout.statusBarsPadding
+import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.FolderOpen
+import androidx.compose.material.icons.outlined.Close
+import androidx.compose.material.icons.outlined.Folder
+import androidx.compose.material.icons.outlined.FolderSpecial
 import androidx.compose.material.icons.outlined.Home
-import androidx.compose.material.icons.outlined.Memory
 import androidx.compose.material.icons.outlined.Terminal
-import androidx.compose.material3.ExperimentalMaterial3Api
-import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
-import androidx.compose.material3.LinearProgressIndicator
-import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TopAppBar
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.collectAsState
-import androidx.compose.runtime.compositionLocalOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalDensity
-import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import org.bimz.reforge.engines.EngineStatus
-import org.bimz.reforge.ui.components.BadgeTone
-import org.bimz.reforge.ui.components.ErrorActionState
-import org.bimz.reforge.ui.components.StatusPill
-import org.bimz.reforge.ui.screens.BinaryAnalysisScreen
+import androidx.compose.ui.unit.sp
+import org.bimz.reforge.ui.WorkstationViewModel
 import org.bimz.reforge.ui.screens.EnginesScreen
-import org.bimz.reforge.ui.screens.HexViewerScreen
+import org.bimz.reforge.ui.screens.HexEditorScreen
 import org.bimz.reforge.ui.screens.HomeScreen
+import org.bimz.reforge.ui.screens.SavedFilesScreen
 import org.bimz.reforge.ui.screens.SettingsScreen
 import org.bimz.reforge.ui.screens.ToolsScreen
 import org.bimz.reforge.ui.screens.WorkspaceScreen
-import org.bimz.reforge.ui.state.WorkstationDestination
-import org.bimz.reforge.ui.state.WorkstationViewModel
+import org.bimz.reforge.ui.theme.BorderSubtle
+import org.bimz.reforge.ui.theme.CyanAccent
+import org.bimz.reforge.ui.theme.EmeraldOk
+import org.bimz.reforge.ui.theme.ObsidianBg
+import org.bimz.reforge.ui.theme.ObsidianElevated
+import org.bimz.reforge.ui.theme.ObsidianSurface
+import org.bimz.reforge.ui.theme.TextMuted
+import org.bimz.reforge.ui.theme.TextPrimary
+import org.bimz.reforge.ui.theme.TextSecondary
 
-val LocalBottomClearance = compositionLocalOf { 96.dp }
-val LocalIsKeyboardOpen = compositionLocalOf { false }
+enum class WorkstationDestination(val label: String, val icon: ImageVector) {
+    HOME("Home", Icons.Outlined.Home),
+    WORKSPACE("Workspace", Icons.Outlined.Folder),
+    SAVED("RE FORGE", Icons.Outlined.FolderSpecial),
+    TOOLS("Terminal", Icons.Outlined.Terminal),
+    HEX("Hex", Icons.Outlined.Folder),
+    ENGINES("Engines", Icons.Outlined.Folder),
+    SETTINGS("Settings", Icons.Outlined.Folder)
+}
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ReForgeAppShell(viewModel: WorkstationViewModel) {
+fun ReForgeNav(
+    viewModel: WorkstationViewModel,
+    onOpenFilePicker: () -> Unit,
+    onImportToForgePicker: () -> Unit = onOpenFilePicker,
+    onSaveDumpRequested: (String) -> Unit = {},
+    onSavePatchedRequested: () -> Unit = {}
+) {
+    var current by rememberSaveable { mutableStateOf(WorkstationDestination.HOME) }
     val state by viewModel.uiState.collectAsState()
-    val density = LocalDensity.current
+    val engines by viewModel.engineRegistry.engines.collectAsState()
 
-    val imeBottomDp = with(density) { WindowInsets.ime.getBottom(this).toDp() }
-    val navBottomDp = with(density) { WindowInsets.navigationBars.getBottom(this).toDp() }
-    val isKeyboardOpen = imeBottomDp > navBottomDp + 24.dp
-    val bottomClearance: Dp = if (isKeyboardOpen) imeBottomDp + 6.dp else navBottomDp + 88.dp
-
-    val primaryDockItems = listOf(
-        WorkstationDestination.HOME to Icons.Outlined.Home,
-        WorkstationDestination.WORKSPACE to Icons.Outlined.FolderOpen,
-        WorkstationDestination.BINARY to Icons.Outlined.Memory,
-        WorkstationDestination.TOOLS to Icons.Outlined.Terminal
+    val dockDestinations = listOf(
+        WorkstationDestination.HOME,
+        WorkstationDestination.WORKSPACE,
+        WorkstationDestination.SAVED,
+        WorkstationDestination.TOOLS
     )
 
-    val secondaryHeaderItems = listOf(
-        WorkstationDestination.HEX,
-        WorkstationDestination.ENGINES,
-        WorkstationDestination.SETTINGS
-    )
-
-    val activeEngineCount = state.engines.count {
-        it.enabled && (it.status == EngineStatus.INTEGRATED || it.status == EngineStatus.PARTIALLY_INTEGRATED)
-    }
-
-    CompositionLocalProvider(
-        LocalBottomClearance provides bottomClearance,
-        LocalIsKeyboardOpen provides isKeyboardOpen
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(ObsidianBg)
+            .statusBarsPadding()
     ) {
-        Scaffold(
-            contentWindowInsets = WindowInsets.statusBars,
-            topBar = {
-                Column {
-                    TopAppBar(
-                        title = {
-                            Column {
-                                Text(
-                                    text = "RE FORGE",
-                                    style = MaterialTheme.typography.titleMedium
-                                )
-                                Text(
-                                    text = state.activeProject?.originalFileName ?: "Radare2 ARM64 Workstation",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                        },
-                        actions = {
-                            Box(modifier = Modifier.padding(end = 12.dp)) {
-                                StatusPill(
-                                    label = "$activeEngineCount/${state.engines.size} ON",
-                                    tone = if (activeEngineCount > 0) BadgeTone.PASS else BadgeTone.NEUTRAL
-                                )
-                            }
-                        }
+        Column(modifier = Modifier.fillMaxSize()) {
+            // Minimalist Top Header Bar
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text(
+                        text = "RE FORGE",
+                        color = TextPrimary,
+                        fontWeight = FontWeight.Bold,
+                        fontSize = 16.sp,
+                        letterSpacing = 1.2.sp
                     )
+                    Text(
+                        text = state.activeFile?.name ?: "No binary loaded",
+                        color = if (state.activeFile != null) CyanAccent else TextMuted,
+                        fontSize = 11.sp,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                val enabledCount = engines.count { it.enabled }
+                Surface(
+                    shape = RoundedCornerShape(10.dp),
+                    color = ObsidianSurface,
+                    border = BorderStroke(1.dp, BorderSubtle),
+                    modifier = Modifier.clickable { current = WorkstationDestination.ENGINES }
+                ) {
                     Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(7.dp)
+                                .clip(CircleShape)
+                                .background(EmeraldOk)
+                        )
+                        Spacer(modifier = Modifier.width(6.dp))
+                        Text(
+                            text = "$enabledCount/${engines.size} ON",
+                            color = EmeraldOk,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                    }
+                }
+            }
+
+            // Secondary Compact Pill Bar (Hex, Engines, Settings)
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp)
+                    .padding(bottom = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                listOf(
+                    WorkstationDestination.HEX to "Hex",
+                    WorkstationDestination.ENGINES to "Engines",
+                    WorkstationDestination.SETTINGS to "Settings"
+                ).forEach { (dest, title) ->
+                    val selected = current == dest
+                    Surface(
+                        shape = RoundedCornerShape(9.dp),
+                        color = if (selected) CyanAccent.copy(alpha = 0.16f) else ObsidianSurface,
+                        border = BorderStroke(1.dp, if (selected) CyanAccent else BorderSubtle),
+                        modifier = Modifier.clickable { current = dest }
+                    ) {
+                        Text(
+                            text = title,
+                            color = if (selected) CyanAccent else TextSecondary,
+                            fontSize = 12.sp,
+                            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 6.dp)
+                        )
+                    }
+                }
+            }
+
+            AnimatedVisibility(visible = state.statusBanner != null) {
+                state.statusBanner?.let { banner ->
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState())
-                            .padding(horizontal = 12.dp, vertical = 4.dp),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                            .padding(horizontal = 16.dp, vertical = 4.dp),
+                        shape = RoundedCornerShape(10.dp),
+                        color = ObsidianElevated,
+                        border = BorderStroke(1.dp, CyanAccent.copy(alpha = 0.35f))
                     ) {
-                        secondaryHeaderItems.forEach { dest ->
-                            FilterChip(
-                                selected = state.currentRoute == dest,
-                                onClick = { viewModel.navigateTo(dest) },
-                                label = { Text(dest.label) },
-                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 44.dp)
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = banner,
+                                color = TextPrimary,
+                                fontSize = 12.sp,
+                                modifier = Modifier.weight(1f)
                             )
-                        }
-                    }
-                    AnimatedVisibility(
-                        visible = state.isBusy,
-                        enter = expandVertically(tween(180)) + fadeIn(tween(180)),
-                        exit = shrinkVertically(tween(160)) + fadeOut(tween(140))
-                    ) {
-                        Column {
-                            LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
-                            Surface(
-                                color = MaterialTheme.colorScheme.surfaceVariant,
-                                modifier = Modifier.fillMaxWidth()
-                            ) {
+                            if (banner.contains("RE FORGE/")) {
                                 Text(
-                                    text = state.busyMessage,
-                                    style = MaterialTheme.typography.bodySmall,
-                                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 4.dp)
+                                    text = "OPEN",
+                                    color = CyanAccent,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier
+                                        .clickable {
+                                            viewModel.dismissBanner()
+                                            current = WorkstationDestination.SAVED
+                                        }
+                                        .padding(horizontal = 8.dp, vertical = 2.dp)
                                 )
                             }
+                            Icon(
+                                imageVector = Icons.Outlined.Close,
+                                contentDescription = "Dismiss",
+                                tint = TextSecondary,
+                                modifier = Modifier
+                                    .size(16.dp)
+                                    .clickable { viewModel.dismissBanner() }
+                            )
                         }
                     }
                 }
             }
-        ) { innerPadding ->
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                Column(modifier = Modifier.fillMaxSize()) {
-                    AnimatedVisibility(
-                        visible = state.errorMessage != null,
-                        enter = expandVertically(tween(200)) + fadeIn(tween(200)),
-                        exit = shrinkVertically(tween(160)) + fadeOut(tween(140))
-                    ) {
-                        Box(modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
-                            ErrorActionState(
-                                title = "Operation Error",
-                                cause = state.errorMessage.orEmpty(),
-                                retryLabel = "Dismiss",
-                                onRetry = { viewModel.clearError() }
-                            )
-                        }
-                    }
 
-                    AnimatedContent(
-                        targetState = state.currentRoute,
-                        transitionSpec = {
-                            val forward = targetState.ordinal >= initialState.ordinal
-                            val offsetSign = if (forward) 1 else -1
-                            (fadeIn(tween(180)) + slideInHorizontally(tween(200)) { offsetSign * (it / 16) })
-                                .togetherWith(
-                                    fadeOut(tween(140)) + slideOutHorizontally(tween(160)) { -offsetSign * (it / 16) }
-                                )
+            Box(modifier = Modifier.weight(1f)) {
+                when (current) {
+                    WorkstationDestination.HOME -> HomeScreen(
+                        state = state,
+                        engines = engines,
+                        onOpenPicker = onOpenFilePicker,
+                        onOpenRecent = {
+                            viewModel.openExistingFile(it)
+                            current = WorkstationDestination.TOOLS
                         },
-                        label = "route_transition",
-                        modifier = Modifier.fillMaxSize()
-                    ) { route ->
-                        when (route) {
-                            WorkstationDestination.HOME -> HomeScreen(state, viewModel)
-                            WorkstationDestination.WORKSPACE -> WorkspaceScreen(state, viewModel)
-                            WorkstationDestination.BINARY -> BinaryAnalysisScreen(state, viewModel)
-                            WorkstationDestination.TOOLS -> ToolsScreen(state, viewModel)
-                            WorkstationDestination.HEX -> HexViewerScreen(state, viewModel)
-                            WorkstationDestination.ENGINES -> EnginesScreen(state, viewModel)
-                            WorkstationDestination.SETTINGS -> SettingsScreen(state, viewModel)
+                        onNavigate = { current = it }
+                    )
+                    WorkstationDestination.WORKSPACE -> WorkspaceScreen(
+                        state = state,
+                        onImportFile = onOpenFilePicker,
+                        onSelectFile = {
+                            viewModel.openExistingFile(it)
+                            current = WorkstationDestination.TOOLS
+                        },
+                        onDeleteFile = { viewModel.deleteWorkspaceFile(it) }
+                    )
+                    WorkstationDestination.SAVED -> SavedFilesScreen(
+                        state = state,
+                        onImportToForge = onImportToForgePicker,
+                        onOpenInTerminal = { file ->
+                            viewModel.openExistingFile(file)
+                            current = WorkstationDestination.TOOLS
+                        },
+                        onOpenInHex = { file ->
+                            viewModel.openExistingFile(file)
+                            current = WorkstationDestination.HEX
+                        },
+                        onDeleteSaved = { item ->
+                            viewModel.deleteSavedForgeFile(item)
                         }
-                    }
-                }
-
-                // Floating Pill Navigation Dock (auto-hides when keyboard is open)
-                AnimatedVisibility(
-                    visible = !isKeyboardOpen,
-                    enter = slideInVertically(tween(200)) { it } + fadeIn(tween(180)),
-                    exit = slideOutVertically(tween(150)) { it } + fadeOut(tween(120)),
-                    modifier = Modifier
-                        .align(Alignment.BottomCenter)
-                        .padding(bottom = navBottomDp + 12.dp)
-                ) {
-                    FloatingWorkstationDock(
-                        items = primaryDockItems,
-                        currentRoute = state.currentRoute,
-                        onSelect = { viewModel.navigateTo(it) }
+                    )
+                    WorkstationDestination.HEX -> HexEditorScreen(
+                        state = state,
+                        onLoadPage = { viewModel.loadHexPage(it) },
+                        onPatchByte = { off, value -> viewModel.patchHexByte(off, value) },
+                        onRevert = { viewModel.revertHexPatches() },
+                        onSavePatched = {
+                            viewModel.savePatchedToForgeFolder()
+                            onSavePatchedRequested()
+                        }
+                    )
+                    WorkstationDestination.TOOLS -> ToolsScreen(
+                        state = state,
+                        onRunCommand = { cmd ->
+                            viewModel.runConsoleCommand(cmd)
+                        },
+                        onExitR2Mode = { viewModel.exitR2Mode() },
+                        onStopCommand = { viewModel.stopActiveSessionCommand() },
+                        onAddSession = { viewModel.addTerminalSession() },
+                        onSelectSession = { sid -> viewModel.selectTerminalSession(sid) },
+                        onCloseSession = { sid -> viewModel.closeTerminalSession(sid) },
+                        onSaveDumpToForge = { explicitText ->
+                            val payload = explicitText.ifBlank { viewModel.buildLatestDumpText() }
+                            if (payload.isNotBlank()) {
+                                viewModel.saveDumpDirectToForge(payload)
+                                onSaveDumpRequested(payload)
+                            }
+                        },
+                        onOpenSavedFolder = { current = WorkstationDestination.SAVED }
+                    )
+                    WorkstationDestination.ENGINES -> EnginesScreen(
+                        engines = engines,
+                        onToggleEngine = { id, enabled -> viewModel.engineRegistry.setEngineEnabled(id, enabled) }
+                    )
+                    WorkstationDestination.SETTINGS -> SettingsScreen(
+                        workspacePath = viewModel.workspaceManager.workspaceDir.absolutePath,
+                        onClearCache = {
+                            viewModel.workspaceManager.clearAllCache()
+                            viewModel.refreshRecentFiles()
+                        }
                     )
                 }
             }
         }
-    }
-}
 
-@Composable
-private fun FloatingWorkstationDock(
-    items: List<Pair<WorkstationDestination, ImageVector>>,
-    currentRoute: WorkstationDestination,
-    onSelect: (WorkstationDestination) -> Unit
-) {
-    Surface(
-        shape = RoundedCornerShape(28.dp),
-        color = Color(0xFF151C26),
-        border = BorderStroke(1.dp, Color(0xFF283446)),
-        shadowElevation = 10.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp),
-            horizontalArrangement = Arrangement.spacedBy(10.dp),
-            verticalAlignment = Alignment.CenterVertically
+        // Minimalist Icon-Only Floating Dock
+        Surface(
+            modifier = Modifier
+                .align(Alignment.BottomCenter)
+                .navigationBarsPadding()
+                .padding(horizontal = 24.dp, vertical = 10.dp),
+            shape = RoundedCornerShape(22.dp),
+            color = ObsidianSurface.copy(alpha = 0.96f),
+            border = BorderStroke(1.dp, BorderSubtle),
+            shadowElevation = 8.dp
         ) {
-            items.forEach { (dest, icon) ->
-                val selected = currentRoute == dest
-                val slotBg by animateColorAsState(
-                    targetValue = if (selected) Color(0xFF2E3E52) else Color.Transparent,
-                    animationSpec = tween(180),
-                    label = "dock_slot_bg"
-                )
-                val iconTint by animateColorAsState(
-                    targetValue = if (selected) Color(0xFF7DD3FC) else Color(0xFF94A3B8),
-                    animationSpec = tween(180),
-                    label = "dock_icon_tint"
-                )
-
-                Box(
-                    contentAlignment = Alignment.Center,
-                    modifier = Modifier
-                        .size(52.dp)
-                        .clip(RoundedCornerShape(18.dp))
-                        .background(slotBg)
-                        .clickable { onSelect(dest) }
-                ) {
-                    Icon(
-                        imageVector = icon,
-                        contentDescription = dest.label,
-                        tint = iconTint,
-                        modifier = Modifier.size(24.dp)
-                    )
+            Row(
+                modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(18.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                dockDestinations.forEach { dest ->
+                    val selected = current == dest
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(if (selected) CyanAccent.copy(alpha = 0.16f) else Color.Transparent)
+                            .clickable { current = dest },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = dest.icon,
+                            contentDescription = dest.label,
+                            tint = if (selected) CyanAccent else TextSecondary,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
             }
         }

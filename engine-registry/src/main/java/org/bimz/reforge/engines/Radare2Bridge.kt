@@ -6,208 +6,299 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.io.BufferedReader
+import java.io.BufferedWriter
 import java.io.File
+import java.io.InputStreamReader
+import java.io.OutputStreamWriter
+import java.util.UUID
+import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.TimeUnit
+import kotlin.concurrent.thread
 
-data class Radare2ExecutionResult(
+data class R2CommandResult(
     val success: Boolean,
-    val exitCode: Int,
+    val command: String,
     val stdout: String,
     val stderr: String,
-    val durationMs: Long = 0L
+    val exitCode: Int,
+    val durationMs: Long,
+    val currentSeekHex: String = "0x00000000"
 )
 
 class Radare2Bridge(private val context: Context) {
 
-    fun resolveBinary(): File? {
+    private class SessionR2Holder(
+        val targetPath: String?,
+        val process: Process,
+        val writer: BufferedWriter,
+        val reader: BufferedReader,
+        val stderrQueue: ConcurrentLinkedQueue<String>,
+        @Volatile var liveStderrSink: ((String) -> Unit)? = null
+    )
+
+    private val sessionProcesses = ConcurrentHashMap<String, SessionR2Holder>()
+
+    fun locateRadare2Binary(): File? {
         val nativeDir = File(context.applicationInfo.nativeLibraryDir)
-        val candidate = File(nativeDir, "libr2.so")
-        if (candidate.exists() && candidate.canExecute()) {
-            return candidate
+        val packagedSo = File(nativeDir, "libr2.so")
+        if (packagedSo.exists() && packagedSo.canExecute()) {
+            return packagedSo
         }
-        return null
+        val fallbackBins = listOf(
+            File(nativeDir, "libradare2.so"),
+            File(context.filesDir, "bin/r2")
+        )
+        return fallbackBins.firstOrNull { it.exists() && it.canExecute() }
     }
 
-    fun isAvailable(): Boolean = resolveBinary() != null
+    fun isAvailable(): Boolean = locateRadare2Binary() != null
 
-    suspend fun getVersion(): String = withContext(Dispatchers.IO) {
-        val bin = resolveBinary() ?: return@withContext "Not bundled in nativeLibraryDir"
-        val res = runCommand(bin, null, listOf("-v"), timeoutSeconds = 15, onProgress = null)
-        if (res.success) res.stdout.lines().firstOrNull()?.trim().orEmpty() else res.stderr
+    fun versionString(): String {
+        val bin = locateRadare2Binary() ?: return "Unavailable"
+        return try {
+            val pb = ProcessBuilder(bin.absolutePath, "-v")
+            configureEnv(pb)
+            val proc = pb.start()
+            val out = proc.inputStream.bufferedReader().readText().trim()
+            proc.waitFor(5, TimeUnit.SECONDS)
+            out.lineSequence().firstOrNull()?.take(48) ?: "ARM64 Binary Ready"
+        } catch (e: Exception) {
+            "Binary Present (${e.javaClass.simpleName})"
+        }
     }
 
-    suspend fun executeSafeQuery(targetFile: File?, command: String): Radare2ExecutionResult =
-        executeCommand(targetFile, command)
+    private fun configureEnv(pb: ProcessBuilder) {
+        val env = pb.environment()
+        val nativeDir = context.applicationInfo.nativeLibraryDir
+        val existingLd = env["LD_LIBRARY_PATH"].orEmpty()
+        env["LD_LIBRARY_PATH"] = if (existingLd.isEmpty()) nativeDir else "$nativeDir:$existingLd"
+        val r2Home = File(context.filesDir, "r2home").apply { mkdirs() }
+        val r2Tmp = File(context.cacheDir, "r2tmp").apply { mkdirs() }
+        env["HOME"] = r2Home.absolutePath
+        env["TMPDIR"] = r2Tmp.absolutePath
+        env["R2_NOPLUGINS"] = "1"
+    }
 
-    suspend fun executeCommand(targetFile: File?, command: String): Radare2ExecutionResult =
-        executeCommandStreaming(targetFile, command, onProgress = null)
+    private fun getOrStartSessionProcess(
+        sessionId: String,
+        r2Bin: File,
+        targetFile: File?
+    ): SessionR2Holder {
+        val desiredPath = targetFile?.absolutePath
+        val existing = sessionProcesses[sessionId]
+        if (existing != null && existing.process.isAlive && existing.targetPath == desiredPath) {
+            return existing
+        }
+        if (existing != null) {
+            closeSession(sessionId)
+        }
+
+        val args = mutableListOf(
+            r2Bin.absolutePath,
+            "-N",
+            "-q",
+            "-e", "scr.color=0",
+            "-e", "scr.prompt=false",
+            "-e", "bin.relocs.apply=true"
+        )
+        if (targetFile != null && targetFile.exists()) {
+            args.add(targetFile.absolutePath)
+        } else {
+            args.add("-")
+        }
+
+        val pb = ProcessBuilder(args)
+        pb.directory(context.filesDir)
+        configureEnv(pb)
+        val process = pb.start()
+
+        val stderrQueue = ConcurrentLinkedQueue<String>()
+        val holder = SessionR2Holder(
+            targetPath = desiredPath,
+            process = process,
+            writer = BufferedWriter(OutputStreamWriter(process.outputStream, Charsets.UTF_8)),
+            reader = BufferedReader(InputStreamReader(process.inputStream, Charsets.UTF_8)),
+            stderrQueue = stderrQueue
+        )
+
+        thread(isDaemon = true, name = "r2-stderr-$sessionId") {
+            try {
+                BufferedReader(InputStreamReader(process.errorStream, Charsets.UTF_8)).use { errReader ->
+                    while (true) {
+                        val line = errReader.readLine() ?: break
+                        if (line.isNotBlank()) {
+                            stderrQueue.add(line)
+                            holder.liveStderrSink?.invoke(line)
+                        }
+                    }
+                }
+            } catch (_: Exception) {
+            }
+        }
+
+        sessionProcesses[sessionId] = holder
+        return holder
+    }
+
+    fun stopSession(sessionId: String) {
+        val holder = sessionProcesses.remove(sessionId) ?: return
+        try {
+            holder.process.destroyForcibly()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun closeSession(sessionId: String) {
+        val holder = sessionProcesses.remove(sessionId) ?: return
+        try {
+            holder.writer.write("q!\n")
+            holder.writer.flush()
+        } catch (_: Exception) {
+        }
+        try {
+            holder.process.destroyForcibly()
+        } catch (_: Exception) {
+        }
+    }
+
+    fun closeAllSessions() {
+        val keys = sessionProcesses.keys.toList()
+        keys.forEach { closeSession(it) }
+    }
+
+    suspend fun executeCommand(
+        targetFile: File?,
+        command: String,
+        timeoutSeconds: Long = 0L
+    ): R2CommandResult = executeCommandStreaming(targetFile, command, "oneshot") {}
 
     suspend fun executeCommandStreaming(
         targetFile: File?,
         command: String,
-        onProgress: ((String) -> Unit)?
-    ): Radare2ExecutionResult = withContext(Dispatchers.IO) {
-        val bin = resolveBinary()
-            ?: return@withContext Radare2ExecutionResult(
+        sessionId: String = "default",
+        onProgress: (String) -> Unit
+    ): R2CommandResult = withContext(Dispatchers.IO) {
+        val r2Bin = locateRadare2Binary()
+            ?: return@withContext R2CommandResult(
                 success = false,
+                command = command,
+                stdout = "",
+                stderr = "Radare2 ARM64 engine binary (libr2.so) not packaged in nativeLibraryDir.",
                 exitCode = -1,
-                stdout = "",
-                stderr = "Radare2 ARM64 binary (libr2.so) is not bundled in this APK build."
+                durationMs = 0L
             )
 
-        val trimmed = command.trim()
-        if (trimmed.isEmpty()) {
-            return@withContext Radare2ExecutionResult(
-                success = false,
-                exitCode = -2,
-                stdout = "",
-                stderr = "Empty Radare2 command."
-            )
+        val sanitizedCommand = command.trim().ifEmpty { "i" }
+        val start = System.currentTimeMillis()
+        val marker = "__REFORGE_EOC_${UUID.randomUUID()}__"
+        val seekMarker = "${marker}_SEEK_"
+        val endMarker = "${marker}_END_"
+
+        val tickerJob = launch {
+            while (isActive) {
+                delay(1000L)
+                val sec = (System.currentTimeMillis() - start) / 1000L
+                val min = sec / 60L
+                val remSec = sec % 60L
+                val elapsedFmt = if (min > 0L) "${min}m ${remSec}s" else "${remSec}s"
+                onProgress("[r2:progress] Running '$sanitizedCommand' ($elapsedFmt elapsed — unlimited time)...")
+            }
         }
 
-        if (targetFile != null && (!targetFile.exists() || !targetFile.isFile)) {
-            return@withContext Radare2ExecutionResult(
-                success = false,
-                exitCode = -3,
-                stdout = "",
-                stderr = "Target file does not exist: ${targetFile.absolutePath}"
-            )
-        }
-
-        val isAnalysisCmd = trimmed.split(';', ' ').any { token ->
-            val t = token.trim()
-            t == "aa" || t == "aaa" || t == "aaaa" || t == "AA" || t == "aac" || t == "aar"
-        }
-
-        val effectiveCmd = if (isAnalysisCmd && !trimmed.contains(";")) {
-            "$trimmed; ?e [r2] Functions discovered: ; afl~?"
-        } else {
-            trimmed
-        }
-
-        val argv = mutableListOf(
-            "-N",
-            "-q",
-            "-e", "scr.color=0",
-            "-e", "scr.interactive=false",
-            "-e", "scr.prompt=false",
-            "-e", "bin.relocs.apply=true"
-        )
-        if (isAnalysisCmd) {
-            argv.addAll(listOf("-e", "anal.verbose=true", "-e", "bin.verbose=true"))
-        }
-        argv.addAll(listOf("-c", effectiveCmd))
-        if (targetFile != null) {
-            argv.add(targetFile.absolutePath)
-        } else {
-            argv.add("--")
-        }
-
-        runCommand(bin, context.cacheDir, argv, timeoutSeconds = 180, onProgress = onProgress)
-    }
-
-    private suspend fun runCommand(
-        binary: File,
-        workDir: File?,
-        args: List<String>,
-        timeoutSeconds: Long,
-        onProgress: ((String) -> Unit)?
-    ): Radare2ExecutionResult = withContext(Dispatchers.IO) {
-        val startMs = System.currentTimeMillis()
         try {
-            val configDir = File(context.filesDir, ".config").apply { mkdirs() }
-            val dataDir = File(context.filesDir, ".local/share").apply { mkdirs() }
+            val holder = getOrStartSessionProcess(sessionId, r2Bin, targetFile)
+            holder.stderrQueue.clear()
+            holder.liveStderrSink = { errLine -> onProgress(errLine) }
 
-            val fullCmd = listOf(binary.absolutePath) + args
-            val pb = ProcessBuilder(fullCmd)
-            if (workDir != null) pb.directory(workDir)
-            pb.environment()["HOME"] = context.filesDir.absolutePath
-            pb.environment()["TMPDIR"] = context.cacheDir.absolutePath
-            pb.environment()["XDG_CONFIG_HOME"] = configDir.absolutePath
-            pb.environment()["XDG_DATA_HOME"] = dataDir.absolutePath
-            pb.environment()["XDG_CACHE_HOME"] = context.cacheDir.absolutePath
-            pb.environment()["TERM"] = "dumb"
-
-            val process = pb.start()
-            runCatching { process.outputStream.close() }
-
-            val stdoutBuf = StringBuffer()
-            val stderrBuf = StringBuffer()
-
-            val outThread = Thread {
-                runCatching {
-                    process.inputStream.bufferedReader().useLines { lines ->
-                        lines.forEach { line ->
-                            stdoutBuf.append(line).append('\n')
-                            onProgress?.invoke(line)
-                        }
-                    }
-                }
-            }.apply { isDaemon = true; start() }
-
-            val errThread = Thread {
-                runCatching {
-                    process.errorStream.bufferedReader().useLines { lines ->
-                        lines.forEach { line ->
-                            stderrBuf.append(line).append('\n')
-                            if (line.isNotBlank()) {
-                                onProgress?.invoke("[r2:status] $line")
-                            }
-                        }
-                    }
-                }
-            }.apply { isDaemon = true; start() }
-
-            val tickerJob = if (onProgress != null) {
-                launch {
-                    var elapsedSec = 0
-                    while (isActive && process.isAlive) {
-                        delay(1000L)
-                        elapsedSec += 1
-                        if (process.isAlive) {
-                            onProgress.invoke("[r2:progress] Processing... (${elapsedSec}s elapsed)")
-                        }
-                    }
-                }
-            } else {
-                null
+            synchronized(holder.writer) {
+                holder.writer.write(sanitizedCommand)
+                holder.writer.newLine()
+                holder.writer.write("?e $seekMarker")
+                holder.writer.newLine()
+                holder.writer.write("?v $$")
+                holder.writer.newLine()
+                holder.writer.write("?e $endMarker")
+                holder.writer.newLine()
+                holder.writer.flush()
             }
 
-            val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
-            tickerJob?.cancel()
+            val outBuilder = StringBuilder()
+            var readingSeek = false
+            var latestSeek = "0x00000000"
+            var completedNormally = false
 
-            if (!finished) {
-                process.destroyForcibly()
-                outThread.join(500)
-                errThread.join(500)
-                val duration = System.currentTimeMillis() - startMs
-                return@withContext Radare2ExecutionResult(
+            while (true) {
+                val line = holder.reader.readLine() ?: break
+                when {
+                    line == seekMarker -> {
+                        readingSeek = true
+                    }
+                    line == endMarker -> {
+                        completedNormally = true
+                        break
+                    }
+                    readingSeek -> {
+                        val trimmed = line.trim()
+                        if (trimmed.startsWith("0x")) {
+                            latestSeek = trimmed
+                        }
+                        readingSeek = false
+                    }
+                    else -> {
+                        outBuilder.appendLine(line)
+                        if (line.isNotBlank()) {
+                            onProgress(line)
+                        }
+                    }
+                }
+            }
+
+            holder.liveStderrSink = null
+            tickerJob.cancel()
+
+            val errLines = mutableListOf<String>()
+            while (true) {
+                val e = holder.stderrQueue.poll() ?: break
+                errLines.add(e)
+            }
+            val stderrText = errLines.joinToString("\n").trim()
+            val elapsed = System.currentTimeMillis() - start
+
+            if (!completedNormally) {
+                sessionProcesses.remove(sessionId)
+                val exitVal = runCatching { holder.process.exitValue() }.getOrDefault(-2)
+                return@withContext R2CommandResult(
                     success = false,
-                    exitCode = -4,
-                    stdout = stdoutBuf.toString(),
-                    stderr = "Radare2 timed out after ${timeoutSeconds}s.",
-                    durationMs = duration
+                    command = sanitizedCommand,
+                    stdout = outBuilder.toString().trim(),
+                    stderr = if (stderrText.isNotEmpty()) stderrText else "[r2] Session process stopped or terminated.",
+                    exitCode = exitVal,
+                    durationMs = elapsed,
+                    currentSeekHex = latestSeek
                 )
             }
 
-            outThread.join(2000)
-            errThread.join(2000)
-            val exitCode = process.exitValue()
-            val duration = System.currentTimeMillis() - startMs
-            Radare2ExecutionResult(
-                success = exitCode == 0,
-                exitCode = exitCode,
-                stdout = stdoutBuf.toString(),
-                stderr = stderrBuf.toString(),
-                durationMs = duration
+            R2CommandResult(
+                success = true,
+                command = sanitizedCommand,
+                stdout = outBuilder.toString().trim(),
+                stderr = stderrText,
+                exitCode = 0,
+                durationMs = elapsed,
+                currentSeekHex = latestSeek
             )
         } catch (e: Exception) {
-            Radare2ExecutionResult(
+            tickerJob.cancel()
+            sessionProcesses.remove(sessionId)
+            R2CommandResult(
                 success = false,
-                exitCode = -5,
+                command = sanitizedCommand,
                 stdout = "",
-                stderr = "Execution failed: ${e.message}",
-                durationMs = System.currentTimeMillis() - startMs
+                stderr = "Radare2 session stopped/error: ${e.message ?: e.javaClass.simpleName}",
+                exitCode = -3,
+                durationMs = System.currentTimeMillis() - start
             )
         }
     }
