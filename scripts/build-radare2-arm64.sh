@@ -3,12 +3,14 @@ set -euo pipefail
 
 R2_VERSION="${R2_VERSION:-5.9.8}"
 NDK_ROOT="${ANDROID_NDK_HOME:?ANDROID_NDK_HOME must be set}"
-OUT_JNILIBS="${1:?Usage: build-radare2-arm64.sh <output_jniLibs_arm64_dir>}"
+OUT_JNILIBS_RAW="${1:?Usage: build-radare2-arm64.sh <output_jniLibs_arm64_dir>}"
+
+mkdir -p "$OUT_JNILIBS_RAW"
+OUT_JNILIBS="$(cd "$OUT_JNILIBS_RAW" && pwd)"
 
 WORK_DIR="$(mktemp -d)"
 trap 'rm -rf "$WORK_DIR"' EXIT
 
-mkdir -p "$OUT_JNILIBS"
 cd "$WORK_DIR"
 
 curl -fsSL "https://github.com/radareorg/radare2/archive/refs/tags/${R2_VERSION}.tar.gz" -o r2.tar.gz
