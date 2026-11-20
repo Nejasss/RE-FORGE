@@ -225,7 +225,7 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
                 hexPageOffset = 0L,
                 hexLastMatchOffset = -1L,
                 hexLastMatchLength = 0,
-                hexRevision = it.hexRevision + 1
+                hexRevision = st.hexRevision + 1
             )
         }
 
