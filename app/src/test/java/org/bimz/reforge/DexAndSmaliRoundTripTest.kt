@@ -33,16 +33,17 @@ class DexAndSmaliRoundTripTest {
         val engine = DexInspectorEngine()
         val outDex = File(tempFolder.root, "classes.dex")
         val asmRes = engine.assembleSmaliDirectoryToDex(smaliDir, outDex, apiLevel = 26)
-        assertTrue(asmRes.isSuccess)
-        assertTrue(outDex.exists() && outDex.length() > 0L)
+        assertTrue("Assemble failed: ${asmRes.exceptionOrNull()?.stackTraceToString()}", asmRes.isSuccess)
+        assertTrue("Output DEX missing or empty", outDex.exists() && outDex.length() > 0L)
 
         val indexRes = engine.indexContainer(outDex)
-        assertTrue(indexRes.isSuccess)
+        assertTrue("Index failed: ${indexRes.exceptionOrNull()?.stackTraceToString()}", indexRes.isSuccess)
         val classes = indexRes.getOrThrow().classes
-        assertTrue(classes.any { it.javaName == "org.bimz.test.HelloTest" })
+        assertTrue("Class not found in indexed classes: $classes", classes.any { it.javaName == "org.bimz.test.HelloTest" })
 
         val disasmRes = engine.disassembleClassToSmali(outDex, "classes.dex", "Lorg/bimz/test/HelloTest;")
-        assertTrue(disasmRes.isSuccess)
-        assertTrue(disasmRes.getOrThrow().contains("const/16 v0, 0x2a"))
+        assertTrue("Disassemble failed: ${disasmRes.exceptionOrNull()?.stackTraceToString()}", disasmRes.isSuccess)
+        val smaliOut = disasmRes.getOrThrow()
+        assertTrue("Unexpected smali output:\n$smaliOut", smaliOut.contains("const/16 v0, 0x2a"))
     }
 }
