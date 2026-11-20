@@ -1,6 +1,7 @@
 package org.bimz.reforge.ui.screens
 
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -16,6 +17,7 @@ import androidx.compose.ui.unit.dp
 import org.bimz.reforge.ui.components.KeyValueRow
 import org.bimz.reforge.ui.components.WorkstationCard
 import org.bimz.reforge.ui.components.formatByteSize
+import org.bimz.reforge.ui.navigation.LocalBottomClearance
 import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
 
@@ -24,16 +26,19 @@ fun SettingsScreen(
     state: WorkstationUiState,
     viewModel: WorkstationViewModel
 ) {
+    val bottomClearance = LocalBottomClearance.current
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp),
+        contentPadding = PaddingValues(top = 10.dp, bottom = bottomClearance),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
             WorkstationCard(
                 title = "Appearance & Theme",
-                subtitle = "Both dark and light palettes are verified for WCAG AA contrast"
+                subtitle = "High-contrast dark & light workstation palettes"
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -51,18 +56,14 @@ fun SettingsScreen(
 
         item {
             WorkstationCard(
-                title = "Security & Scope Boundaries",
-                subtitle = "Local-first architecture with zero cloud telemetry"
+                title = "Radare2 & Native Runtime Scope",
+                subtitle = "Local-first ARM64 analysis with zero cloud telemetry"
             ) {
                 KeyValueRow("Application ID", "org.bimz.reforge", monospaceValue = true)
+                KeyValueRow("Primary Engine", "Radare2 5.9.8 (ARM64)")
                 KeyValueRow("Storage Access", "Scoped internal filesDir + Android SAF")
                 KeyValueRow("Network Telemetry", "None (0 background network sockets)")
-                KeyValueRow("Signing Keys", "Stored locally in AndroidKeyStore / user PKCS#12")
                 KeyValueRow("Workspace Disk Usage", formatByteSize(state.workspaceStorageBytes))
-                KeyValueRow(
-                    "Intended Use",
-                    "Authorized reverse engineering, security auditing, debugging, and educational binary analysis."
-                )
             }
         }
     }

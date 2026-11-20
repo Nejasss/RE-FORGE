@@ -28,7 +28,7 @@ class Radare2Bridge(private val context: Context) {
 
     suspend fun getVersion(): String = withContext(Dispatchers.IO) {
         val bin = resolveBinary() ?: return@withContext "Not bundled in nativeLibraryDir"
-        val res = runCommand(bin, null, listOf("-v"))
+        val res = runCommand(bin, null, listOf("-v"), timeoutSeconds = 15)
         if (res.success) res.stdout.lines().firstOrNull()?.trim().orEmpty() else res.stderr
     }
 
@@ -65,9 +65,11 @@ class Radare2Bridge(private val context: Context) {
             }
 
             val argv = mutableListOf(
+                "-N",
                 "-q",
                 "-e", "scr.color=0",
                 "-e", "scr.interactive=false",
+                "-e", "scr.prompt=false",
                 "-e", "bin.relocs.apply=true",
                 "-c", trimmed
             )
@@ -76,25 +78,69 @@ class Radare2Bridge(private val context: Context) {
             } else {
                 argv.add("--")
             }
-            runCommand(bin, context.cacheDir, argv)
+            runCommand(bin, context.cacheDir, argv, timeoutSeconds = 120)
         }
 
-    private fun runCommand(binary: File, workDir: File?, args: List<String>): Radare2ExecutionResult {
+    private fun runCommand(
+        binary: File,
+        workDir: File?,
+        args: List<String>,
+        timeoutSeconds: Long
+    ): Radare2ExecutionResult {
         return try {
+            val configDir = File(context.filesDir, ".config").apply { mkdirs() }
+            val dataDir = File(context.filesDir, ".local/share").apply { mkdirs() }
+
             val fullCmd = listOf(binary.absolutePath) + args
             val pb = ProcessBuilder(fullCmd)
             if (workDir != null) pb.directory(workDir)
             pb.environment()["HOME"] = context.filesDir.absolutePath
             pb.environment()["TMPDIR"] = context.cacheDir.absolutePath
+            pb.environment()["XDG_CONFIG_HOME"] = configDir.absolutePath
+            pb.environment()["XDG_DATA_HOME"] = dataDir.absolutePath
+            pb.environment()["XDG_CACHE_HOME"] = context.cacheDir.absolutePath
+            pb.environment()["TERM"] = "dumb"
+
             val process = pb.start()
-            val finished = process.waitFor(60, TimeUnit.SECONDS)
+            // Close stdin immediately so r2 never blocks waiting for interactive input
+            runCatching { process.outputStream.close() }
+
+            // Drain stdout & stderr concurrently to prevent 64KB Android pipe buffer deadlock during `aaa`
+            var stdoutText = ""
+            var stderrText = ""
+            val outThread = Thread {
+                stdoutText = runCatching {
+                    process.inputStream.bufferedReader().use { it.readText() }
+                }.getOrDefault("")
+            }.apply { isDaemon = true; start() }
+
+            val errThread = Thread {
+                stderrText = runCatching {
+                    process.errorStream.bufferedReader().use { it.readText() }
+                }.getOrDefault("")
+            }.apply { isDaemon = true; start() }
+
+            val finished = process.waitFor(timeoutSeconds, TimeUnit.SECONDS)
             if (!finished) {
                 process.destroyForcibly()
-                return Radare2ExecutionResult(false, -4, "", "Radare2 analysis timed out after 60 seconds")
+                outThread.join(500)
+                errThread.join(500)
+                val partial = buildString {
+                    if (stdoutText.isNotBlank()) appendLine(stdoutText.trim())
+                    if (stderrText.isNotBlank()) appendLine(stderrText.trim())
+                }.trim()
+                val msg = if (partial.isNotEmpty()) {
+                    "Radare2 timed out after ${timeoutSeconds}s.\nPartial output:\n$partial"
+                } else {
+                    "Radare2 timed out after ${timeoutSeconds}s."
+                }
+                return Radare2ExecutionResult(false, -4, stdoutText, msg)
             }
-            val out = process.inputStream.bufferedReader().use { it.readText() }
-            val err = process.errorStream.bufferedReader().use { it.readText() }
-            Radare2ExecutionResult(process.exitValue() == 0, process.exitValue(), out, err)
+
+            outThread.join(2000)
+            errThread.join(2000)
+            val exitCode = process.exitValue()
+            Radare2ExecutionResult(exitCode == 0, exitCode, stdoutText, stderrText)
         } catch (e: Exception) {
             Radare2ExecutionResult(false, -5, "", "Execution failed: ${e.message}")
         }

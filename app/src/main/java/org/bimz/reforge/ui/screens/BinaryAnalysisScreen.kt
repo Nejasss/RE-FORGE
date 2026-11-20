@@ -3,6 +3,7 @@ package org.bimz.reforge.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -21,17 +22,19 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import org.bimz.reforge.ui.components.EmptyActionState
 import org.bimz.reforge.ui.components.KeyValueRow
 import org.bimz.reforge.ui.components.WorkstationCard
+import org.bimz.reforge.ui.navigation.LocalBottomClearance
 import org.bimz.reforge.ui.state.WorkstationDestination
 import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
@@ -42,16 +45,22 @@ fun BinaryAnalysisScreen(
     state: WorkstationUiState,
     viewModel: WorkstationViewModel
 ) {
+    val bottomClearance = LocalBottomClearance.current
+    val clipboard = LocalClipboardManager.current
+
+    val r2Enabled = state.engines.firstOrNull { it.id == "radare2_core" }?.enabled ?: true
     val elfEnabled = state.engines.firstOrNull { it.id == "native_elf_mmap" }?.enabled ?: true
     val capstoneEnabled = state.engines.firstOrNull { it.id == "capstone_disasm" }?.enabled ?: true
-    val r2Enabled = state.engines.firstOrNull { it.id == "radare2_core" }?.enabled ?: true
 
-    if (!elfEnabled && !capstoneEnabled && !r2Enabled) {
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+    if (!r2Enabled && !elfEnabled && !capstoneEnabled) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 14.dp, bottom = bottomClearance)
+        ) {
             item {
                 EmptyActionState(
-                    title = "All Binary Engines Disabled",
-                    reason = "Native ELF, Capstone, and Radare2 engines are OFF. Enable at least one in Engines.",
+                    title = "All Analysis Engines Disabled",
+                    reason = "Radare2, Native ELF, and Capstone engines are OFF. Enable at least one in Engines.",
                     actionLabel = "Open Engines",
                     onAction = { viewModel.navigateTo(WorkstationDestination.ENGINES) }
                 )
@@ -61,11 +70,14 @@ fun BinaryAnalysisScreen(
     }
 
     if (state.activeProject == null) {
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 14.dp, bottom = bottomClearance)
+        ) {
             item {
                 EmptyActionState(
-                    title = "No Binary Target Loaded",
-                    reason = "Import an ELF executable, .so shared library, or raw binary from Home.",
+                    title = "No Target Loaded",
+                    reason = "Import an executable, .so shared library, or binary from Home.",
                     actionLabel = "Go to Home",
                     onAction = { viewModel.navigateTo(WorkstationDestination.HOME) }
                 )
@@ -75,14 +87,14 @@ fun BinaryAnalysisScreen(
     }
 
     val availableTabs = buildList {
+        if (r2Enabled) add("Radare2")
         if (elfEnabled) {
             add("ELF Overview")
             add("Sections")
             add("Symbols")
             add("Strings")
         }
-        if (capstoneEnabled) add("Disassembly")
-        if (r2Enabled) add("Radare2")
+        if (capstoneEnabled) add("Capstone")
     }
 
     var activeTabName by remember(availableTabs) { mutableStateOf(availableTabs.first()) }
@@ -94,7 +106,8 @@ fun BinaryAnalysisScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp),
+        contentPadding = PaddingValues(top = 10.dp, bottom = bottomClearance),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
@@ -115,6 +128,75 @@ fun BinaryAnalysisScreen(
 
         val elf = state.elfReport
         when (activeTabName) {
+            "Radare2" -> {
+                item {
+                    WorkstationCard(
+                        title = "Radare2 ARM64 Analysis Core",
+                        subtitle = "Target: ${state.activeProject.originalFileName}"
+                    ) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = r2CustomCmd,
+                                onValueChange = { r2CustomCmd = it },
+                                modifier = Modifier.weight(1f),
+                                label = { Text("r2 command") },
+                                singleLine = true
+                            )
+                            Button(
+                                onClick = { viewModel.runRadare2Query(r2CustomCmd) },
+                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Exec")
+                            }
+                        }
+                        Spacer(modifier = Modifier.height(8.dp))
+                        FlowRow(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            listOf("aaa; afl", "ij", "iSj", "isj", "iij", "izz", "pd 64", "px 128").forEach { q ->
+                                OutlinedButton(
+                                    onClick = {
+                                        r2CustomCmd = q
+                                        viewModel.runRadare2Query(q)
+                                    },
+                                    modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                                    shape = RoundedCornerShape(8.dp)
+                                ) {
+                                    Text(q)
+                                }
+                            }
+                        }
+                    }
+                }
+                if (state.r2Output.isNotBlank()) {
+                    item {
+                        WorkstationCard(
+                            title = "Radare2 Output",
+                            subtitle = "Command: $r2CustomCmd"
+                        ) {
+                            OutlinedButton(
+                                onClick = { clipboard.setText(AnnotatedString(state.r2Output)) },
+                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 44.dp),
+                                shape = RoundedCornerShape(8.dp)
+                            ) {
+                                Text("Copy Output")
+                            }
+                            Spacer(modifier = Modifier.height(8.dp))
+                            Text(
+                                text = state.r2Output,
+                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace)
+                            )
+                        }
+                    }
+                }
+            }
+
             "ELF Overview" -> {
                 if (elf == null || !elf.valid) {
                     item {
@@ -174,11 +256,11 @@ fun BinaryAnalysisScreen(
                                 OutlinedButton(
                                     onClick = {
                                         offsetInput = sec.fileOffset.toString(16)
-                                        activeTabName = "Disassembly"
+                                        activeTabName = "Capstone"
                                         viewModel.runCapstoneDisassembly(archInput, offsetInput)
                                     },
                                     modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                                    shape = RoundedCornerShape(6.dp)
+                                    shape = RoundedCornerShape(8.dp)
                                 ) {
                                     Text("Disassemble Section")
                                 }
@@ -219,7 +301,7 @@ fun BinaryAnalysisScreen(
                 }
             }
 
-            "Disassembly" -> {
+            "Capstone" -> {
                 item {
                     WorkstationCard(
                         title = "Capstone Native Disassembler",
@@ -250,7 +332,7 @@ fun BinaryAnalysisScreen(
                         Button(
                             onClick = { viewModel.runCapstoneDisassembly(archInput, offsetInput) },
                             modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                            shape = RoundedCornerShape(6.dp)
+                            shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("Disassemble Offset")
                         }
@@ -262,61 +344,6 @@ fun BinaryAnalysisScreen(
                         style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
                         color = MaterialTheme.colorScheme.onBackground
                     )
-                }
-            }
-
-            "Radare2" -> {
-                item {
-                    WorkstationCard(
-                        title = "Radare2 ARM64 Analysis Console",
-                        subtitle = "All Radare2 commands unlocked (aaa, afl, pdf, ij, iSj, isj, izz, px)"
-                    ) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedTextField(
-                                value = r2CustomCmd,
-                                onValueChange = { r2CustomCmd = it },
-                                modifier = Modifier.weight(1f),
-                                label = { Text("r2 command") },
-                                singleLine = true
-                            )
-                            Button(
-                                onClick = { viewModel.runRadare2Query(r2CustomCmd) },
-                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text("Exec")
-                            }
-                        }
-                        Spacer(modifier = Modifier.height(8.dp))
-                        FlowRow(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalArrangement = Arrangement.spacedBy(8.dp)
-                        ) {
-                            listOf("aaa; afl", "ij", "iSj", "isj", "iij", "izz", "pd 32").forEach { q ->
-                                OutlinedButton(
-                                    onClick = {
-                                        r2CustomCmd = q
-                                        viewModel.runRadare2Query(q)
-                                    },
-                                    modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                                    shape = RoundedCornerShape(6.dp)
-                                ) {
-                                    Text(q)
-                                }
-                            }
-                        }
-                        if (state.r2Output.isNotBlank()) {
-                            Spacer(modifier = Modifier.height(10.dp))
-                            Text(
-                                text = state.r2Output,
-                                style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace)
-                            )
-                        }
-                    }
                 }
             }
         }

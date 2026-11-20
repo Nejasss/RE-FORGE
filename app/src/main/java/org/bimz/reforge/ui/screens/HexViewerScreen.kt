@@ -3,6 +3,7 @@ package org.bimz.reforge.ui.screens
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -29,6 +30,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.unit.dp
 import org.bimz.reforge.ui.components.EmptyActionState
 import org.bimz.reforge.ui.components.WorkstationCard
+import org.bimz.reforge.ui.navigation.LocalBottomClearance
 import org.bimz.reforge.ui.state.WorkstationDestination
 import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
@@ -39,9 +41,13 @@ fun HexViewerScreen(
     state: WorkstationUiState,
     viewModel: WorkstationViewModel
 ) {
+    val bottomClearance = LocalBottomClearance.current
     val nativeEnabled = state.engines.firstOrNull { it.id == "native_elf_mmap" }?.enabled ?: true
     if (!nativeEnabled) {
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 14.dp, bottom = bottomClearance)
+        ) {
             item {
                 EmptyActionState(
                     title = "Native Mmap Hex Engine Disabled",
@@ -56,7 +62,10 @@ fun HexViewerScreen(
 
     val project = state.activeProject
     if (project == null) {
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 14.dp, bottom = bottomClearance)
+        ) {
             item {
                 EmptyActionState(
                     title = "No File Open in Hex Viewer",
@@ -78,7 +87,8 @@ fun HexViewerScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp),
+        contentPadding = PaddingValues(top = 10.dp, bottom = bottomClearance),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         item {
@@ -104,7 +114,7 @@ fun HexViewerScreen(
                             viewModel.loadHexPage(target)
                         },
                         modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("Jump")
                     }
@@ -117,14 +127,14 @@ fun HexViewerScreen(
                     OutlinedButton(
                         onClick = { viewModel.loadHexPage((state.hexPageOffset - 256L).coerceAtLeast(0L)) },
                         modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("Prev 256B")
                     }
                     OutlinedButton(
                         onClick = { viewModel.loadHexPage(state.hexPageOffset + 256L) },
                         modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("Next 256B")
                     }
@@ -145,7 +155,7 @@ fun HexViewerScreen(
                     OutlinedButton(
                         onClick = { viewModel.searchHexBytes(searchHex) },
                         modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                        shape = RoundedCornerShape(6.dp)
+                        shape = RoundedCornerShape(8.dp)
                     ) {
                         Text("Find")
                     }
@@ -208,7 +218,7 @@ fun HexViewerScreen(
                         Button(
                             onClick = { viewModel.patchHexBytes(patchOffsetHex, patchBytesHex) },
                             modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                            shape = RoundedCornerShape(6.dp)
+                            shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("Apply Byte Patch")
                         }
@@ -216,7 +226,7 @@ fun HexViewerScreen(
                             onClick = { viewModel.undoHexPatch() },
                             enabled = state.hexCanUndo,
                             modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                            shape = RoundedCornerShape(6.dp)
+                            shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("Undo")
                         }
@@ -224,7 +234,7 @@ fun HexViewerScreen(
                             onClick = { viewModel.redoHexPatch() },
                             enabled = state.hexCanRedo,
                             modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                            shape = RoundedCornerShape(6.dp)
+                            shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("Redo")
                         }

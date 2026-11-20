@@ -8,6 +8,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
@@ -31,6 +32,7 @@ import org.bimz.reforge.ui.components.KeyValueRow
 import org.bimz.reforge.ui.components.StatusPill
 import org.bimz.reforge.ui.components.WorkstationCard
 import org.bimz.reforge.ui.components.formatByteSize
+import org.bimz.reforge.ui.navigation.LocalBottomClearance
 import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
 
@@ -39,16 +41,16 @@ fun EnginesScreen(
     state: WorkstationUiState,
     viewModel: WorkstationViewModel
 ) {
+    val bottomClearance = LocalBottomClearance.current
+
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp),
+        contentPadding = PaddingValues(top = 10.dp, bottom = bottomClearance),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
         items(state.engines, key = { it.id }) { engine ->
-            val isUnsupported = engine.status == EngineStatus.UNSUPPORTED
-            val showExpandedUi = engine.enabled && !isUnsupported
-
             val tone = when (engine.status) {
                 EngineStatus.INTEGRATED -> BadgeTone.PASS
                 EngineStatus.PARTIALLY_INTEGRATED, EngineStatus.AVAILABLE -> BadgeTone.WARNING
@@ -58,7 +60,7 @@ fun EnginesScreen(
 
             WorkstationCard(
                 title = engine.name,
-                subtitle = if (showExpandedUi) "${engine.version} | ${engine.license}" else null
+                subtitle = if (engine.enabled) "${engine.version} | ${engine.license}" else null
             ) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -66,16 +68,14 @@ fun EnginesScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     StatusPill(label = engine.status.name, tone = tone)
-                    if (!isUnsupported) {
-                        Switch(
-                            checked = engine.enabled,
-                            onCheckedChange = { viewModel.toggleEngineEnabled(engine.id, it) }
-                        )
-                    }
+                    Switch(
+                        checked = engine.enabled,
+                        onCheckedChange = { viewModel.toggleEngineEnabled(engine.id, it) }
+                    )
                 }
 
                 AnimatedVisibility(
-                    visible = showExpandedUi,
+                    visible = engine.enabled,
                     enter = expandVertically(tween(240)) + fadeIn(tween(220)),
                     exit = shrinkVertically(tween(200)) + fadeOut(tween(150))
                 ) {
@@ -92,7 +92,7 @@ fun EnginesScreen(
                         Button(
                             onClick = { viewModel.runEngineSelfTest(engine.id) },
                             modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                            shape = RoundedCornerShape(6.dp)
+                            shape = RoundedCornerShape(8.dp)
                         ) {
                             Text("Test Engine")
                         }

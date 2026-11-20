@@ -51,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import org.bimz.reforge.ui.components.BadgeTone
 import org.bimz.reforge.ui.components.StatusPill
+import org.bimz.reforge.ui.navigation.LocalBottomClearance
 import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
 
@@ -63,6 +64,7 @@ fun ToolsScreen(
     var copiedNotice by remember { mutableStateOf<String?>(null) }
     val listState = rememberLazyListState()
     val clipboard = LocalClipboardManager.current
+    val bottomClearance = LocalBottomClearance.current
 
     val r2Engine = state.engines.firstOrNull { it.id == "radare2_core" }
     val r2Ready = r2Engine?.enabled == true && r2Engine.initialized
@@ -75,9 +77,9 @@ fun ToolsScreen(
     val termStdout = Color(0xFFE2E8F0)
     val termStderr = Color(0xFFF87171)
 
-    LaunchedEffect(state.consoleHistory.size) {
+    LaunchedEffect(state.consoleHistory.size, bottomClearance) {
         if (state.consoleHistory.isNotEmpty()) {
-            listState.animateScrollToItem(state.consoleHistory.size - 1)
+            listState.animateScrollToItem(state.consoleHistory.size)
         }
     }
 
@@ -92,15 +94,18 @@ fun ToolsScreen(
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 10.dp, vertical = 8.dp),
-        verticalArrangement = Arrangement.spacedBy(8.dp)
+            .padding(
+                start = 10.dp,
+                end = 10.dp,
+                top = 8.dp,
+                bottom = bottomClearance
+            )
     ) {
-        // Terminal Container
         Surface(
             modifier = Modifier
                 .weight(1f)
                 .fillMaxWidth(),
-            shape = RoundedCornerShape(10.dp),
+            shape = RoundedCornerShape(12.dp),
             color = termBg,
             border = BorderStroke(1.dp, termBorder)
         ) {
@@ -110,7 +115,7 @@ fun ToolsScreen(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(termBarBg)
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
                     horizontalArrangement = Arrangement.SpaceBetween,
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -125,13 +130,13 @@ fun ToolsScreen(
                         )
                         Spacer(modifier = Modifier.width(8.dp))
                         StatusPill(
-                            label = if (r2Ready) "r2 UNLOCKED" else "r2 OFF/ABSENT",
+                            label = if (r2Ready) "r2 READY" else "r2 OFF/ABSENT",
                             tone = if (r2Ready) BadgeTone.PASS else BadgeTone.WARNING
                         )
                     }
                     IconButton(
                         onClick = { viewModel.runConsoleCommand("clear") },
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(44.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.ClearAll,
@@ -153,17 +158,17 @@ fun ToolsScreen(
                     item(key = "motd") {
                         Column {
                             Text(
-                                text = "Welcome to RE FORGE Terminal (ARM64)",
+                                text = "Welcome to RE FORGE Terminal (Radare2 ARM64)",
                                 style = MaterialTheme.typography.labelMedium.copy(fontFamily = FontFamily.Monospace),
                                 color = promptGreen
                             )
                             Text(
-                                text = "Target: ${state.activeProject?.originalFileName ?: "none (load from Home)"}",
+                                text = "Target: ${state.activeProject?.originalFileName ?: "none (open from Home)"}",
                                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                                 color = Color(0xFF94A3B8)
                             )
                             Text(
-                                text = "Commands: help | engines | hash | elf | capstone <arch> <off> | r2 <cmd> | clear",
+                                text = "Commands: r2 <cmd> | elf | capstone <arch> <off> | hash | engines | clear",
                                 style = MaterialTheme.typography.labelSmall.copy(fontFamily = FontFamily.Monospace),
                                 color = Color(0xFF94A3B8)
                             )
@@ -223,7 +228,7 @@ fun ToolsScreen(
                     }
                 }
 
-                // Termux Extra-Keys Quick Bar
+                // Termux Extra-Keys Quick Bar (stays pinned directly above input & keyboard)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -233,7 +238,6 @@ fun ToolsScreen(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     listOf(
-                        "help",
                         "r2 aaa; afl",
                         "r2 ij",
                         "r2 iSj",
@@ -243,6 +247,7 @@ fun ToolsScreen(
                         "elf",
                         "capstone arm64 0",
                         "hash",
+                        "help",
                         "clear"
                     ).forEach { keyCmd ->
                         Surface(
@@ -250,11 +255,11 @@ fun ToolsScreen(
                             shape = RoundedCornerShape(6.dp),
                             color = Color(0xFF1A2230),
                             border = BorderStroke(1.dp, termBorder),
-                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 44.dp)
+                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 40.dp)
                         ) {
                             Box(
                                 contentAlignment = Alignment.Center,
-                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 8.dp)
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp)
                             ) {
                                 Text(
                                     text = keyCmd,
@@ -266,12 +271,12 @@ fun ToolsScreen(
                     }
                 }
 
-                // Bottom Prompt Input Line
+                // Bottom Prompt Input Line (sits directly above keyboard when IME is open)
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
                         .background(Color(0xFF0D1117))
-                        .padding(horizontal = 12.dp, vertical = 6.dp),
+                        .padding(horizontal = 12.dp, vertical = 4.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
@@ -300,7 +305,7 @@ fun ToolsScreen(
                         decorationBox = { innerTextField ->
                             if (commandText.isEmpty()) {
                                 Text(
-                                    text = "Enter command (e.g. r2 aaa; afl)...",
+                                    text = "r2 aaa; afl ...",
                                     style = MaterialTheme.typography.bodySmall.copy(fontFamily = FontFamily.Monospace),
                                     color = Color(0xFF64748B)
                                 )
@@ -310,7 +315,7 @@ fun ToolsScreen(
                     )
                     IconButton(
                         onClick = { submitCommand(commandText) },
-                        modifier = Modifier.size(48.dp)
+                        modifier = Modifier.size(44.dp)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.PlayArrow,

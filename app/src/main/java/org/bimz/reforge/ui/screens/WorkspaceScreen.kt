@@ -1,9 +1,9 @@
 package org.bimz.reforge.ui.screens
 
-import android.content.Intent
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.defaultMinSize
 import androidx.compose.foundation.layout.fillMaxSize
@@ -13,6 +13,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
+import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
@@ -22,20 +23,15 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
-import androidx.core.content.FileProvider
-import org.bimz.reforge.core.model.CheckStatus
-import org.bimz.reforge.ui.components.BadgeTone
 import org.bimz.reforge.ui.components.EmptyActionState
 import org.bimz.reforge.ui.components.KeyValueRow
-import org.bimz.reforge.ui.components.StatusPill
 import org.bimz.reforge.ui.components.WorkstationCard
 import org.bimz.reforge.ui.components.formatByteSize
+import org.bimz.reforge.ui.navigation.LocalBottomClearance
 import org.bimz.reforge.ui.state.WorkstationDestination
 import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
-import java.io.File
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
@@ -43,15 +39,17 @@ fun WorkspaceScreen(
     state: WorkstationUiState,
     viewModel: WorkstationViewModel
 ) {
-    val context = LocalContext.current
-    val apksigEnabled = state.engines.firstOrNull { it.id == "apksig_signer" }?.enabled ?: true
+    val bottomClearance = LocalBottomClearance.current
     val project = state.activeProject
     if (project == null) {
-        LazyColumn(modifier = Modifier.fillMaxSize().padding(14.dp)) {
+        LazyColumn(
+            modifier = Modifier.fillMaxSize().padding(horizontal = 14.dp),
+            contentPadding = PaddingValues(top = 14.dp, bottom = bottomClearance)
+        ) {
             item {
                 EmptyActionState(
-                    title = "No Active Project Selected",
-                    reason = "Open or import a file from the Home tab to inspect metadata, stage patches, rebuild, or sign.",
+                    title = "No Active Target Selected",
+                    reason = "Open or import a file from Home to inspect hashes, compare binaries, and record analyst notes.",
                     actionLabel = "Go to Home",
                     onAction = { viewModel.navigateTo(WorkstationDestination.HOME) }
                 )
@@ -65,7 +63,8 @@ fun WorkspaceScreen(
     LazyColumn(
         modifier = Modifier
             .fillMaxSize()
-            .padding(horizontal = 14.dp, vertical = 10.dp),
+            .padding(horizontal = 14.dp),
+        contentPadding = PaddingValues(top = 10.dp, bottom = bottomClearance),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
         item {
@@ -81,99 +80,31 @@ fun WorkspaceScreen(
                 KeyValueRow("SHA-1", project.sha1, monospaceValue = true)
                 KeyValueRow("MD5", project.md5, monospaceValue = true)
                 KeyValueRow("CRC32", project.crc32, monospaceValue = true)
-            }
-        }
-
-        if (apksigEnabled) {
-            item {
-                WorkstationCard(
-                    title = "Build, Sign & Verify Pipeline",
-                    subtitle = "Authorized local APK packaging with 16KB native .so alignment and apksig v1/v2/v3"
+                Spacer(modifier = Modifier.height(10.dp))
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    FlowRow(
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalArrangement = Arrangement.spacedBy(8.dp)
+                    Button(
+                        onClick = { viewModel.navigateTo(WorkstationDestination.BINARY) },
+                        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                        shape = RoundedCornerShape(8.dp)
                     ) {
-                        Button(
-                            onClick = { viewModel.rebuildActiveApk() },
-                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text("Rebuild APK")
-                        }
-                        Button(
-                            onClick = { viewModel.signRebuiltOrWorkingApk() },
-                            modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                            shape = RoundedCornerShape(6.dp)
-                        ) {
-                            Text("Sign & Verify APK")
-                        }
-                        val signedPath = state.signingResult?.signedApkPath
-                        if (signedPath != null && File(signedPath).exists()) {
-                            OutlinedButton(
-                                onClick = {
-                                    val file = File(signedPath)
-                                    val uri = FileProvider.getUriForFile(
-                                        context,
-                                        "${context.packageName}.fileprovider",
-                                        file
-                                    )
-                                    val shareIntent = Intent(Intent.ACTION_SEND).apply {
-                                        type = "application/vnd.android.package-archive"
-                                        putExtra(Intent.EXTRA_STREAM, uri)
-                                        addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                                    }
-                                    context.startActivity(Intent.createChooser(shareIntent, "Export Signed APK"))
-                                },
-                                modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                                shape = RoundedCornerShape(6.dp)
-                            ) {
-                                Text("Export Signed APK")
-                            }
-                        }
+                        Text("Analyze in Radare2")
                     }
-
-                    state.rebuildResult?.let { res ->
-                        Spacer(modifier = Modifier.height(10.dp))
-                        StatusPill(
-                            label = "Rebuild: ${res.status} (${res.changedFileCount} changes)",
-                            tone = if (res.outputApkPath != null) BadgeTone.PASS else BadgeTone.FAILED
-                        )
-                        Spacer(modifier = Modifier.height(6.dp))
-                        Text(
-                            text = res.buildLog,
-                            style = androidx.compose.material3.MaterialTheme.typography.labelSmall
-                        )
+                    OutlinedButton(
+                        onClick = { viewModel.navigateTo(WorkstationDestination.TOOLS) },
+                        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Open Terminal")
                     }
-
-                    state.signingResult?.let { sig ->
-                        Spacer(modifier = Modifier.height(10.dp))
-                        StatusPill(
-                            label = if (sig.success) "Signed: ${sig.signerAlias}" else "Signing Failed",
-                            tone = if (sig.success) BadgeTone.PASS else BadgeTone.FAILED
-                        )
-                        Spacer(modifier = Modifier.height(4.dp))
-                        Text(text = sig.message, style = androidx.compose.material3.MaterialTheme.typography.bodySmall)
-                        Text(
-                            text = sig.updateIdentityWarning,
-                            style = androidx.compose.material3.MaterialTheme.typography.bodySmall,
-                            color = androidx.compose.material3.MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-
-                    state.verificationReport?.let { ver ->
-                        Spacer(modifier = Modifier.height(10.dp))
-                        val tone = when (ver.overallStatus) {
-                            CheckStatus.PASS -> BadgeTone.PASS
-                            CheckStatus.WARNING -> BadgeTone.WARNING
-                            CheckStatus.FAILED -> BadgeTone.FAILED
-                            CheckStatus.NOT_TESTED -> BadgeTone.NEUTRAL
-                        }
-                        StatusPill(label = "Post-Build Verification: ${ver.overallStatus}", tone = tone)
-                        Spacer(modifier = Modifier.height(6.dp))
-                        ver.items.forEach { item ->
-                            KeyValueRow(item.checkName, "[${item.status}] ${item.detail}", monospaceValue = true)
-                        }
+                    OutlinedButton(
+                        onClick = { viewModel.navigateTo(WorkstationDestination.HEX) },
+                        modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
+                        shape = RoundedCornerShape(8.dp)
+                    ) {
+                        Text("Hex View")
                     }
                 }
             }
@@ -181,13 +112,13 @@ fun WorkspaceScreen(
 
         item {
             WorkstationCard(
-                title = "Staged Workspace Modifications (${state.modifiedEntries.size})",
-                subtitle = "Tracked edits in staging/ before rebuild"
+                title = "Patched Working Copy Log (${state.modifiedEntries.size})",
+                subtitle = "Byte modifications recorded in isolated workspace"
             ) {
                 if (state.modifiedEntries.isEmpty()) {
                     Text(
-                        text = "No staged edits recorded yet. Edit Smali in DEX view or bytes in Hex view.",
-                        style = androidx.compose.material3.MaterialTheme.typography.bodySmall
+                        text = "No byte patches applied yet. Use Hex View to patch working copy bytes.",
+                        style = MaterialTheme.typography.bodySmall
                     )
                 } else {
                     state.modifiedEntries.forEach { mod ->
@@ -200,8 +131,8 @@ fun WorkspaceScreen(
         if (state.projects.size > 1) {
             item {
                 WorkstationCard(
-                    title = "Compare With Another Workspace",
-                    subtitle = "Computes SHA-256, ZIP entry delta, and streaming byte differences"
+                    title = "Binary Diff With Another Target",
+                    subtitle = "Computes SHA-256 and streaming byte differences"
                 ) {
                     FlowRow(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -211,7 +142,7 @@ fun WorkspaceScreen(
                             OutlinedButton(
                                 onClick = { viewModel.compareActiveWithOtherProject(other) },
                                 modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                                shape = RoundedCornerShape(6.dp)
+                                shape = RoundedCornerShape(8.dp)
                             ) {
                                 Text("Compare vs ${other.originalFileName}")
                             }
@@ -223,9 +154,6 @@ fun WorkspaceScreen(
                         KeyValueRow("Identical SHA-256", cmp.identicalHash.toString())
                         KeyValueRow("Size Delta", "${cmp.sizeA} B vs ${cmp.sizeB} B")
                         KeyValueRow("Differing Bytes", cmp.totalDifferingBytes.toString(), monospaceValue = true)
-                        KeyValueRow("Added Entries", cmp.addedZipEntries.size.toString())
-                        KeyValueRow("Removed Entries", cmp.removedZipEntries.size.toString())
-                        KeyValueRow("Modified Entries", cmp.modifiedZipEntries.size.toString())
                     }
                 }
             }
@@ -237,14 +165,14 @@ fun WorkspaceScreen(
                     value = notesDraft,
                     onValueChange = { notesDraft = it },
                     modifier = Modifier.fillMaxWidth(),
-                    label = { Text("Research and audit notes") },
+                    label = { Text("Reverse-engineering & offset notes") },
                     minLines = 3
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Button(
                     onClick = { viewModel.saveProjectNotes(notesDraft) },
                     modifier = Modifier.defaultMinSize(minWidth = 48.dp, minHeight = 48.dp),
-                    shape = RoundedCornerShape(6.dp)
+                    shape = RoundedCornerShape(8.dp)
                 ) {
                     Text("Save Notes")
                 }
