@@ -23,7 +23,7 @@ class EngineConsoleRunner(
             return ConsoleEntry(rawInput, "Type 'help' for available commands.", false)
         }
 
-        val parts = line.split(Regex("\s+"), limit = 2)
+        val parts = line.split(Regex("\\s+"), limit = 2)
         val cmd = parts[0].lowercase()
         val arg = parts.getOrNull(1)?.trim().orEmpty()
 
@@ -99,7 +99,7 @@ class EngineConsoleRunner(
                 }
                 val target = activeFile
                     ?: return ConsoleEntry(line, "No active workspace file loaded.", isError = true)
-                val tokens = arg.split(Regex("\s+"))
+                val tokens = arg.split(Regex("\\s+"))
                 val arch = tokens.getOrNull(0)?.lowercase().orEmpty()
                 val offset = tokens.getOrNull(1)?.removePrefix("0x")?.toLongOrNull(16) ?: 0L
                 if (arch.isBlank()) {
