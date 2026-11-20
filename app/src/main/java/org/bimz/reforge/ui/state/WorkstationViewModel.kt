@@ -1,5 +1,7 @@
 package org.bimz.reforge.ui.state
 
+import org.bimz.reforge.terminal.ConsoleCommandRunner
+
 import android.content.Context
 import org.bimz.reforge.storage.SavedFileManager
 import org.bimz.reforge.storage.SavedForgeFile
