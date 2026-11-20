@@ -99,9 +99,9 @@ fun ToolsScreen(
     val promptColor = if (isR2Mode) ForgeAmber else ForgeCyan
 
     val quickChips = if (isR2Mode) {
-        listOf("aaa", "AA", "afl", "ij", "iSj", "isj", "izz", "pdf @ main")
+        listOf("dump", "dump json", "aaa", "afl", "ij", "iSj", "isj", "izz", "pdf @ main")
     } else {
-        listOf("r2", "r2 aaa", "r2 afl", "elf", "hash", "engines", "help")
+        listOf("dump", "dump md", "dump json", "r2", "elf", "hash", "engines", "help")
     }
 
     val lastSnapshotLen = activeSession.history.lastOrNull()?.output?.length ?: 0

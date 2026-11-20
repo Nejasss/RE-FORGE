@@ -78,6 +78,65 @@ class ConsoleCommandRunner {
             )
         }
 
+        if (trimmed.equals("dump", ignoreCase = true) || trimmed.startsWith("dump ", ignoreCase = true)) {
+            if (activeFile == null || !activeFile.exists()) {
+                return InteractiveCommandOutcome(
+                    entry = ConsoleEntry(
+                        command = trimmed,
+                        output = "[dump] Select a binary or file first before dumping.",
+                        isError = true,
+                        isR2Command = currentR2Mode
+                    ),
+                    nextR2Mode = currentR2Mode,
+                    nextSeekHex = currentSeekHex
+                )
+            }
+            val rawArg = trimmed.removePrefix("dump").removePrefix("DUMP").trim()
+            val parsed = ForgeDumpGenerator.parseArgs(rawArg)
+                ?: return InteractiveCommandOutcome(
+                    entry = ConsoleEntry(
+                        command = trimmed,
+                        output = "Usage: dump [full|exports|imports|functions|strings|sections] [txt|md|json]",
+                        isError = true,
+                        isR2Command = currentR2Mode
+                    ),
+                    nextR2Mode = currentR2Mode,
+                    nextSeekHex = currentSeekHex
+                )
+            val (mode, fmt) = parsed
+            val baseEntry = ConsoleEntry(
+                command = trimmed,
+                output = "[dump] Initializing r2dump (${mode.label} • ${fmt.ext.uppercase(Locale.US)})...",
+                isError = false,
+                isRunning = true,
+                isR2Command = currentR2Mode
+            )
+            onProgress(baseEntry)
+            val res = ForgeDumpGenerator.runDump(context, activeFile, mode, fmt) { statusMsg ->
+                onProgress(baseEntry.copy(output = statusMsg, isRunning = true))
+            }
+            return res.fold(
+                onSuccess = { (_, summary) ->
+                    InteractiveCommandOutcome(
+                        entry = baseEntry.copy(output = summary, isError = false, isRunning = false),
+                        nextR2Mode = currentR2Mode,
+                        nextSeekHex = currentSeekHex
+                    )
+                },
+                onFailure = { err ->
+                    InteractiveCommandOutcome(
+                        entry = baseEntry.copy(
+                            output = "[dump error] ${err.message ?: "Failed to dump binary"}",
+                            isError = true,
+                            isRunning = false
+                        ),
+                        nextR2Mode = currentR2Mode,
+                        nextSeekHex = currentSeekHex
+                    )
+                }
+            )
+        }
+
         if (trimmed.equals("save", ignoreCase = true) || trimmed.equals("export", ignoreCase = true)) {
             return InteractiveCommandOutcome(
                 entry = ConsoleEntry(
@@ -145,6 +204,7 @@ class ConsoleCommandRunner {
                         appendLine("  elf             - Inspect ELF header & architecture")
                         appendLine("  hash            - Compute MD5 / SHA-1 / SHA-256")
                         appendLine("  engines         - Check Radare2 binary status & version")
+                        appendLine("  dump [mode] [fmt] - Generate Il2Cpp-style dump (txt/md/json) to Vault")
                         appendLine("  save | export   - Save latest output to Download/RE FORGE")
                         appendLine("  clear           - Clear session terminal buffer")
                     }.trimEnd(),
