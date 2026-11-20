@@ -669,15 +669,13 @@ private fun ConsoleEntryBlock(
     var isExpanded by remember(entry.id) { mutableStateOf(false) }
 
     val allLines = remember(entry.output) {
-        if (entry.output.isEmpty()) emptyList() else entry.output.split('
-')
+        if (entry.output.isEmpty()) emptyList() else entry.output.split('\n')
     }
     val hiddenCount = (allLines.size - TERMINAL_COLLAPSE_LINES).coerceAtLeast(0)
     val shouldCollapse = !entry.isRunning && hiddenCount > 0 && !isExpanded
     val visibleText = remember(allLines, shouldCollapse) {
         if (shouldCollapse) {
-            allLines.take(TERMINAL_COLLAPSE_LINES).joinToString("
-")
+            allLines.take(TERMINAL_COLLAPSE_LINES).joinToString("\n")
         } else {
             entry.output
         }
