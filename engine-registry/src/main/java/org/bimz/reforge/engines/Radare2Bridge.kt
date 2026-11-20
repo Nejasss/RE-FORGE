@@ -53,6 +53,8 @@ class Radare2Bridge(private val context: Context) {
         return fallbackBins.firstOrNull { it.exists() && it.canExecute() }
     }
 
+    fun resolveBinary(): File? = locateRadare2Binary()
+
     fun isAvailable(): Boolean = locateRadare2Binary() != null
 
     fun versionString(): String {
