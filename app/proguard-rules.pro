@@ -1,0 +1,7 @@
+-keep class org.bimz.reforge.binary.NativeBinaryBridge { *; }
+-keep class org.jf.** { *; }
+-keep class com.android.tools.smali.** { *; }
+-keep class jadx.** { *; }
+-keep class com.android.apksig.** { *; }
+-dontwarn java.awt.**
+-dontwarn javax.swing.**

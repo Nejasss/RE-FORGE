@@ -1,0 +1,118 @@
+name: Build RE FORGE ARM64 APK & Release Archive
+
+on:
+  push:
+    branches: [ main, master ]
+  pull_request:
+    branches: [ main, master ]
+  workflow_dispatch:
+    inputs:
+      build_radare2:
+        description: "Cross-compile Radare2 5.9.8 ARM64 executable into jniLibs"
+        required: false
+        default: true
+        type: boolean
+
+jobs:
+  build-arm64:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+          cache: gradle
+
+      - name: Setup Android SDK and NDK
+        uses: android-actions/setup-android@v3
+        with:
+          packages: "platform-tools platforms;android-35 build-tools;35.0.0 ndk;27.2.12479018 cmake;3.22.1"
+
+      - name: Install Meson and Ninja for ARM64 native engine builds
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build pkg-config curl unzip
+
+      - name: Fetch Capstone 5.0.3 C source for CMake static build
+        run: |
+          mkdir -p "$RUNNER_TEMP/third_party"
+          curl -fsSL "https://github.com/capstone-engine/capstone/archive/refs/tags/5.0.3.tar.gz" -o "$RUNNER_TEMP/capstone.tar.gz"
+          tar -xzf "$RUNNER_TEMP/capstone.tar.gz" -C "$RUNNER_TEMP/third_party"
+          echo "CAPSTONE_SRC_DIR=$RUNNER_TEMP/third_party/capstone-5.0.3" >> "$GITHUB_ENV"
+
+      - name: Cross-compile Radare2 5.9.8 for arm64-v8a
+        if: ${{ github.event.inputs.build_radare2 != 'false' }}
+        env:
+          ANDROID_NDK_HOME: ${{ env.ANDROID_SDK_ROOT }}/ndk/27.2.12479018
+        run: |
+          chmod +x scripts/build-radare2-arm64.sh
+          ./scripts/build-radare2-arm64.sh app/src/main/jniLibs/arm64-v8a
+
+      - name: Initialize Gradle Wrapper
+        run: |
+          gradle wrapper --gradle-version 8.10.2
+          chmod +x gradlew
+
+      - name: Run Unit Tests
+        run: ./gradlew testDebugUnitTest --stacktrace
+
+      - name: Generate Ephemeral CI Release Keystore if Secret Absent
+        run: |
+          if [ -z "${REFORGE_KEYSTORE_PATH:-}" ]; then
+            KEYSTORE_FILE="$RUNNER_TEMP/reforge-ci-release.p12"
+            keytool -genkeypair -v \
+              -keystore "$KEYSTORE_FILE" \
+              -storetype PKCS12 \
+              -storepass "reforge_ci_build" \
+              -keypass "reforge_ci_build" \
+              -alias "reforge_release" \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 3650 \
+              -dname "CN=RE FORGE CI Release, O=org.bimz.reforge"
+            echo "REFORGE_KEYSTORE_PATH=$KEYSTORE_FILE" >> "$GITHUB_ENV"
+            echo "REFORGE_KEYSTORE_PASSWORD=reforge_ci_build" >> "$GITHUB_ENV"
+            echo "REFORGE_KEY_ALIAS=reforge_release" >> "$GITHUB_ENV"
+            echo "REFORGE_KEY_PASSWORD=reforge_ci_build" >> "$GITHUB_ENV"
+          fi
+
+      - name: Build Signed ARM64 Release APK
+        run: ./gradlew assembleRelease --stacktrace
+
+      - name: Verify APK Structure, ABI, and Signature
+        run: |
+          APK_PATH="app/build/outputs/apk/release/app-release.apk"
+          test -f "$APK_PATH"
+          unzip -l "$APK_PATH" | grep "AndroidManifest.xml"
+          unzip -l "$APK_PATH" | grep "classes.dex"
+          unzip -l "$APK_PATH" | grep "lib/arm64-v8a/libreforge_native.so"
+          "$ANDROID_SDK_ROOT/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK_PATH"
+          cp "$APK_PATH" "$RUNNER_TEMP/RE-FORGE.apk"
+
+      - name: Package RE-FORGE-FULL-ARM64 Release ZIP
+        run: |
+          python3 scripts/package-release-zip.py \
+            . \
+            "$RUNNER_TEMP/RE-FORGE.apk" \
+            "v1.0.0" \
+            "$RUNNER_TEMP/RE-FORGE-FULL-ARM64-v1.0.0.zip"
+
+      - name: Upload RE-FORGE.apk Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RE-FORGE-apk
+          path: ${{ runner.temp }}/RE-FORGE.apk
+          retention-days: 30
+
+      - name: Upload RE-FORGE-FULL-ARM64-v1.0.0.zip Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: RE-FORGE-FULL-ARM64-zip
+          path: ${{ runner.temp }}/RE-FORGE-FULL-ARM64-v1.0.0.zip
+          retention-days: 30

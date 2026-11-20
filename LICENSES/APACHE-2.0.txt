@@ -1,0 +1,3 @@
+Apache License, Version 2.0, January 2004
+Applies to: AndroidX, Jetpack Compose, Google Smali/dexlib2, JADX Core, Android apksig.
+Full text: https://www.apache.org/licenses/LICENSE-2.0

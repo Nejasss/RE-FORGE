@@ -1,0 +1,2 @@
+GNU Lesser General Public License v3.0 (LGPL-3.0-only)
+Applies to: Radare2 (https://github.com/radareorg/radare2).
