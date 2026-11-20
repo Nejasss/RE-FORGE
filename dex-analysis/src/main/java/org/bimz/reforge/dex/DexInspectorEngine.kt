@@ -112,6 +112,7 @@ class DexInspectorEngine {
         runCatching {
             val container = DexFileFactory.loadDexContainer(targetFile, Opcodes.getDefault())
             val dexEntry = container.getEntry(dexEntryName)
+                ?: container.dexEntryNames.singleOrNull()?.let { container.getEntry(it) }
                 ?: throw IllegalArgumentException("DEX entry not found: $dexEntryName")
             val classDef: ClassDef = dexEntry.dexFile.classes.firstOrNull { it.type == classDescriptor }
                 ?: throw IllegalArgumentException("Class descriptor not found: $classDescriptor")

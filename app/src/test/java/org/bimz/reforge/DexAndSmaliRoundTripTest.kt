@@ -41,7 +41,8 @@ class DexAndSmaliRoundTripTest {
         val classes = indexRes.getOrThrow().classes
         assertTrue("Class not found in indexed classes: $classes", classes.any { it.javaName == "org.bimz.test.HelloTest" })
 
-        val disasmRes = engine.disassembleClassToSmali(outDex, "classes.dex", "Lorg/bimz/test/HelloTest;")
+        val entryName = classes.first { it.javaName == "org.bimz.test.HelloTest" }.dexEntryName
+        val disasmRes = engine.disassembleClassToSmali(outDex, entryName, "Lorg/bimz/test/HelloTest;")
         assertTrue("Disassemble failed: ${disasmRes.exceptionOrNull()?.stackTraceToString()}", disasmRes.isSuccess)
         val smaliOut = disasmRes.getOrThrow()
         assertTrue("Unexpected smali output:\n$smaliOut", smaliOut.contains("const/16 v0, 0x2a"))
