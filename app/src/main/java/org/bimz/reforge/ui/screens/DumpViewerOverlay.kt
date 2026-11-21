@@ -289,7 +289,7 @@ fun DumpViewerOverlay(
         ) {
             Surface(
                 shape = RoundedCornerShape(24.dp),
-                color = Color(0xFF0E1726),
+                color = ForgeElevated,
                 border = BorderStroke(1.2.dp, ForgeEmerald.copy(alpha = 0.75f)),
                 shadowElevation = 10.dp,
                 modifier = Modifier
@@ -578,7 +578,7 @@ private fun InAppDumpReaderLayer(
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF0B1018))
+                        .background(ForgeBg)
                         .padding(horizontal = 8.dp, vertical = 5.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {

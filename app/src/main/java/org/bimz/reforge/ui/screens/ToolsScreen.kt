@@ -182,7 +182,7 @@ fun ToolsScreen(
                 .fillMaxWidth()
                 .weight(1f),
             shape = RoundedCornerShape(14.dp),
-            color = Color(0xFF070A0F),
+            color = ForgeBg,
             border = BorderStroke(
                 1.dp,
                 if (isR2Mode) ForgeAmber.copy(alpha = 0.5f) else ForgeBorder
@@ -193,7 +193,7 @@ fun ToolsScreen(
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF0A0F17))
+                        .background(ForgeSurface)
                         .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
@@ -806,7 +806,7 @@ private fun ConsoleEntryBlock(
     Surface(
         modifier = Modifier.fillMaxWidth(),
         shape = RoundedCornerShape(10.dp),
-        color = Color(0xFF0B1018),
+        color = ForgeSurface,
         border = BorderStroke(1.dp, ForgeBorder.copy(alpha = 0.65f))
     ) {
         Column(modifier = Modifier.padding(10.dp)) {

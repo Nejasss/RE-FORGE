@@ -66,6 +66,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import org.bimz.reforge.engines.EngineStatus
+import org.bimz.reforge.ui.theme.LocalForgeColors
 import org.bimz.reforge.ui.components.BadgeTone
 import org.bimz.reforge.ui.components.ErrorActionState
 import org.bimz.reforge.ui.components.StatusPill
@@ -165,14 +166,15 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                                 horizontalArrangement = Arrangement.spacedBy(4.dp),
                                 verticalAlignment = Alignment.CenterVertically
                             ) {
+                                val tokens = LocalForgeColors.current
                                 quickTools.forEach { (dest, icon, desc) ->
                                     val selected = state.currentRoute == dest
                                     Surface(
                                         shape = RoundedCornerShape(10.dp),
-                                        color = if (selected) Color(0xFF1D354D) else Color(0xFF151C26),
+                                        color = if (selected) tokens.dockSlotBg else tokens.elevated,
                                         border = BorderStroke(
                                             1.dp,
-                                            if (selected) Color(0xFF38BDF8) else Color(0xFF263244)
+                                            if (selected) tokens.cyan else tokens.border
                                         ),
                                         modifier = Modifier
                                             .size(44.dp)
@@ -183,7 +185,7 @@ fun ReForgeAppShell(viewModel: WorkstationViewModel) {
                                             Icon(
                                                 imageVector = icon,
                                                 contentDescription = desc,
-                                                tint = if (selected) Color(0xFF7DD3FC) else Color(0xFF94A3B8),
+                                                tint = if (selected) tokens.dockIconSelected else tokens.dockIcon,
                                                 modifier = Modifier.size(18.dp)
                                             )
                                         }
@@ -299,10 +301,11 @@ private fun FloatingWorkstationDock(
     currentRoute: WorkstationDestination,
     onSelect: (WorkstationDestination) -> Unit
 ) {
+    val tokens = LocalForgeColors.current
     Surface(
         shape = RoundedCornerShape(28.dp),
-        color = Color(0xFF151C26),
-        border = BorderStroke(1.dp, Color(0xFF283446)),
+        color = tokens.dockBg,
+        border = BorderStroke(1.dp, tokens.border),
         shadowElevation = 10.dp
     ) {
         Row(
@@ -313,12 +316,12 @@ private fun FloatingWorkstationDock(
             items.forEach { (dest, icon) ->
                 val selected = currentRoute == dest
                 val slotBg by animateColorAsState(
-                    targetValue = if (selected) Color(0xFF2E3E52) else Color.Transparent,
+                    targetValue = if (selected) tokens.dockSlotBg else Color.Transparent,
                     animationSpec = tween(180),
                     label = "dock_slot_bg"
                 )
                 val iconTint by animateColorAsState(
-                    targetValue = if (selected) Color(0xFF7DD3FC) else Color(0xFF94A3B8),
+                    targetValue = if (selected) tokens.dockIconSelected else tokens.dockIcon,
                     animationSpec = tween(180),
                     label = "dock_icon_tint"
                 )

@@ -1,5 +1,6 @@
 package org.bimz.reforge.service
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -10,6 +11,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.Build
 import android.os.IBinder
+import android.os.PowerManager
 import androidx.core.app.NotificationCompat
 import androidx.core.content.ContextCompat
 import org.bimz.reforge.MainActivity
@@ -17,6 +19,8 @@ import org.bimz.reforge.R
 import org.bimz.reforge.ReForgeApplication
 
 class ReForgeSessionService : Service() {
+
+    private var cpuWakeLock: PowerManager.WakeLock? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -27,6 +31,7 @@ class ReForgeSessionService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_EXIT_ALL) {
+            releaseWakeLock()
             val app = application as? ReForgeApplication
             app?.sharedViewModel?.shutdownAllBackgroundSessions()
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
@@ -37,6 +42,14 @@ class ReForgeSessionService : Service() {
             }
             stopSelf()
             return START_NOT_STICKY
+        }
+
+        val app = application as? ReForgeApplication
+        val hasActiveJob = app?.sharedViewModel?.uiState?.value?.terminalSessions?.any { it.isRunning } == true
+        if (hasActiveJob) {
+            acquireWakeLock()
+        } else {
+            releaseWakeLock()
         }
 
         val notif = buildNotification()
@@ -54,11 +67,38 @@ class ReForgeSessionService : Service() {
         return START_STICKY
     }
 
+    override fun onDestroy() {
+        releaseWakeLock()
+        super.onDestroy()
+    }
+
     override fun onTaskRemoved(rootIntent: Intent?) {
-        // Keep service & Radare2 child sessions alive in background like Termux
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.notify(NOTIF_ID, buildNotification())
         super.onTaskRemoved(rootIntent)
+    }
+
+    @SuppressLint("WakelockTimeout")
+    private fun acquireWakeLock() {
+        runCatching {
+            val existing = cpuWakeLock
+            if (existing != null && existing.isHeld) return
+            val pm = getSystemService(Context.POWER_SERVICE) as PowerManager
+            val wl = pm.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "REFORGE:BackgroundTaskLock").apply {
+                setReferenceCounted(false)
+                acquire(30 * 60 * 1000L)
+            }
+            cpuWakeLock = wl
+        }
+    }
+
+    private fun releaseWakeLock() {
+        runCatching {
+            cpuWakeLock?.let { wl ->
+                if (wl.isHeld) wl.release()
+            }
+            cpuWakeLock = null
+        }
     }
 
     private fun ensureChannel() {
@@ -84,12 +124,13 @@ class ReForgeSessionService : Service() {
         val state = app?.sharedViewModel?.uiState?.value
         val sessionCount = state?.terminalSessions?.size ?: 1
         val r2ActiveCount = state?.terminalSessions?.count { it.r2Mode } ?: 0
+        val runningCount = state?.terminalSessions?.count { it.isRunning } ?: 0
         val targetName = state?.activeFile?.name ?: "No active target"
 
-        val subtitle = if (r2ActiveCount > 0) {
-            "$sessionCount session(s) ($r2ActiveCount r2) • Target: $targetName"
-        } else {
-            "$sessionCount shell session(s) ready • Target: $targetName"
+        val subtitle = when {
+            runningCount > 0 -> "Running $runningCount active task(s) • Target: $targetName"
+            r2ActiveCount > 0 -> "$sessionCount session(s) ($r2ActiveCount r2) • Target: $targetName"
+            else -> "$sessionCount shell session(s) ready • Target: $targetName"
         }
 
         val openIntent = Intent(this, MainActivity::class.java).apply {
@@ -99,7 +140,12 @@ class ReForgeSessionService : Service() {
             this,
             100,
             openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.getActivity(
+                this,
+                100,
+                openIntent,
+                PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            ).let { PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE }
         )
 
         val exitIntent = Intent(this, ReForgeSessionService::class.java).apply {
@@ -114,7 +160,7 @@ class ReForgeSessionService : Service() {
 
         return NotificationCompat.Builder(this, CHANNEL_ID)
             .setSmallIcon(R.mipmap.ic_launcher)
-            .setContentTitle("RE FORGE • Active in Background")
+            .setContentTitle(if (runningCount > 0) "RE FORGE • Task Running in Background" else "RE FORGE • Active in Background")
             .setContentText(subtitle)
             .setOngoing(true)
             .setOnlyAlertOnce(true)

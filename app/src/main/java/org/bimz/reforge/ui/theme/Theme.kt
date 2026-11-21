@@ -4,6 +4,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 
 private val DarkColors = darkColorScheme(
     primary = DarkPrimary,
@@ -42,9 +43,12 @@ fun ReForgeTheme(
     darkTheme: Boolean = true,
     content: @Composable () -> Unit
 ) {
-    MaterialTheme(
-        colorScheme = if (darkTheme) DarkColors else LightColors,
-        typography = ReForgeTypography,
-        content = content
-    )
+    val forgeTokens = if (darkTheme) DarkForgeTokens else LightForgeTokens
+    CompositionLocalProvider(LocalForgeColors provides forgeTokens) {
+        MaterialTheme(
+            colorScheme = if (darkTheme) DarkColors else LightColors,
+            typography = ReForgeTypography,
+            content = content
+        )
+    }
 }

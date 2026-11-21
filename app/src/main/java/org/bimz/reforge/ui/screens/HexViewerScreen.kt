@@ -141,7 +141,8 @@ private fun buildHexRowAnnotated(
     bytesPerRow: Int,
     selectedOffset: Long,
     matchStart: Long,
-    matchLength: Int
+    matchLength: Int,
+    isDark: Boolean = true
 ): AnnotatedString {
     val matchEnd = if (matchStart >= 0L && matchLength > 0) matchStart + matchLength else -1L
     val isRowActive = selectedOffset in rowOffset until (rowOffset + bytesPerRow)
@@ -174,8 +175,8 @@ private fun buildHexRowAnnotated(
                         background = Color(0xFF854D0E),
                         fontWeight = FontWeight.Bold
                     )
-                    bVal == 0 -> SpanStyle(color = Color(0xFF475569))
-                    else -> SpanStyle(color = Color(0xFFE2E8F0))
+                    bVal == 0 -> SpanStyle(color = if (isDark) Color(0xFF475569) else Color(0xFF94A3B8))
+                    else -> SpanStyle(color = if (isDark) Color(0xFFE2E8F0) else Color(0xFF0F172A))
                 }
                 withStyle(style) {
                     append(HEX_LUT[bVal])
@@ -204,8 +205,8 @@ private fun buildHexRowAnnotated(
                         color = Color(0xFFFEF08A),
                         background = Color(0xFF854D0E)
                     )
-                    bVal in 0x20..0x7E -> SpanStyle(color = Color(0xFFCBD5E1))
-                    else -> SpanStyle(color = Color(0xFF475569))
+                    bVal in 0x20..0x7E -> SpanStyle(color = if (isDark) Color(0xFFCBD5E1) else Color(0xFF1E293B))
+                    else -> SpanStyle(color = if (isDark) Color(0xFF475569) else Color(0xFF94A3B8))
                 }
                 withStyle(style) {
                     append(ASCII_LUT[bVal])
@@ -309,12 +310,13 @@ fun HexViewerScreen(
         }
     }
 
-    val editorBg = Color(0xFF0B0F17)
-    val panelBg = Color(0xFF131A26)
-    val borderCol = Color(0xFF263244)
-    val accentBlue = Color(0xFF38BDF8)
-    val accentGreen = Color(0xFF4ADE80)
-    val accentAmber = Color(0xFFFBBF24)
+    val isDark = state.darkTheme
+    val editorBg = if (isDark) Color(0xFF0B0F17) else Color(0xFFF8FAFC)
+    val panelBg = if (isDark) Color(0xFF131A26) else Color(0xFFFFFFFF)
+    val borderCol = if (isDark) Color(0xFF263244) else Color(0xFFCBD5E1)
+    val accentBlue = if (isDark) Color(0xFF38BDF8) else Color(0xFF0369A1)
+    val accentGreen = if (isDark) Color(0xFF4ADE80) else Color(0xFF15803D)
+    val accentAmber = if (isDark) Color(0xFFFBBF24) else Color(0xFFB45309)
 
     Column(
         modifier = Modifier
@@ -342,7 +344,7 @@ fun HexViewerScreen(
                 Surface(
                     onClick = { showGotoDialog = true },
                     shape = RoundedCornerShape(6.dp),
-                    color = Color(0xFF1C2636),
+                    color = if (isDark) Color(0xFF1C2636) else Color(0xFFE2E8F0),
                     border = BorderStroke(1.dp, borderCol),
                     modifier = Modifier.defaultMinSize(minHeight = 40.dp)
                 ) {
@@ -395,7 +397,7 @@ fun HexViewerScreen(
                         Icon(
                             imageVector = Icons.Outlined.Undo,
                             contentDescription = "Undo",
-                            tint = if (state.hexCanUndo) Color.White else Color(0xFF475569)
+                            tint = if (state.hexCanUndo) (if (isDark) Color.White else Color(0xFF0F172A)) else Color(0xFF94A3B8)
                         )
                     }
                     IconButton(
@@ -406,7 +408,7 @@ fun HexViewerScreen(
                         Icon(
                             imageVector = Icons.Outlined.Redo,
                             contentDescription = "Redo",
-                            tint = if (state.hexCanRedo) Color.White else Color(0xFF475569)
+                            tint = if (state.hexCanRedo) (if (isDark) Color.White else Color(0xFF0F172A)) else Color(0xFF94A3B8)
                         )
                     }
                     IconButton(
@@ -519,7 +521,7 @@ fun HexViewerScreen(
 
         Surface(
             shape = RoundedCornerShape(8.dp),
-            color = Color(0xFF101722),
+            color = if (isDark) Color(0xFF101722) else Color(0xFFF1F5F9),
             border = BorderStroke(1.dp, borderCol),
             modifier = Modifier.fillMaxWidth()
         ) {
@@ -574,7 +576,7 @@ fun HexViewerScreen(
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
-                        .background(Color(0xFF151E2C))
+                        .background(if (isDark) Color(0xFF151E2C) else Color(0xFFE2E8F0))
                         .horizontalScroll(hScroll)
                         .padding(start = 8.dp, end = 22.dp, top = 5.dp, bottom = 5.dp)
                 ) {
@@ -612,6 +614,7 @@ fun HexViewerScreen(
                             val rowAnnotated = remember(
                                 rowOffset,
                                 state.hexRevision,
+                                isDark,
                                 if (isRowSelected) selectedOffset else -1L,
                                 state.hexLastMatchOffset,
                                 state.hexLastMatchLength
@@ -622,7 +625,8 @@ fun HexViewerScreen(
                                     bytesPerRow = bytesPerRow,
                                     selectedOffset = selectedOffset,
                                     matchStart = state.hexLastMatchOffset,
-                                    matchLength = state.hexLastMatchLength
+                                    matchLength = state.hexLastMatchLength,
+                                    isDark = isDark
                                 )
                             }
 
@@ -638,7 +642,7 @@ fun HexViewerScreen(
                                 softWrap = false,
                                 maxLines = 1,
                                 modifier = Modifier
-                                    .background(if (isRowSelected) Color(0xFF142033) else Color.Transparent)
+                                    .background(if (isRowSelected) (if (isDark) Color(0xFF142033) else Color(0xFFE0F2FE)) else Color.Transparent)
                                     .padding(vertical = 1.5.dp)
                                     .onSizeChanged { rowWidthPx = it.width.coerceAtLeast(1) }
                                     .pointerInput(rowOffset, rowBytes.size) {
@@ -902,7 +906,7 @@ private fun InspectorChip(label: String, value: String) {
                 fontWeight = FontWeight.Bold,
                 fontSize = 11.sp
             ),
-            color = Color(0xFFE2E8F0)
+            color = MaterialTheme.colorScheme.onSurface
         )
     }
 }

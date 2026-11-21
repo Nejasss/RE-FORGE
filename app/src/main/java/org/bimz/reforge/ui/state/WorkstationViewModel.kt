@@ -806,8 +806,9 @@ class WorkstationViewModel(private val app: ReForgeApplication) : ViewModel() {
             snapshot.savedForgeFiles.filter { !it.isTextDump }.forEach { add(it.file) }
         }.distinctBy { it.absolutePath }
 
+        updateTerminalSession(sid) { it.copy(isRunning = true) }
+        ReForgeSessionService.sync(context)
         viewModelScope.launch(kotlinx.coroutines.Dispatchers.IO) {
-            updateTerminalSession(sid) { it.copy(isRunning = true) }
             val outcome = sessionCommandRunner.executeInteractive(
                 context = context,
                 rawInput = rawInput,
