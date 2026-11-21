@@ -160,8 +160,7 @@ private class ChunkedDumpLineReader(
         val safeEnd = minOf(safeStart + count, totalLines)
         val sb = StringBuilder()
         for (i in safeStart until safeEnd) {
-            if (sb.isNotEmpty()) sb.append('
-')
+            if (sb.isNotEmpty()) sb.append('\n')
             sb.append(getLine(i).text)
         }
         return sb.toString()
@@ -188,12 +187,11 @@ private class ChunkedDumpLineReader(
                     readTotal += r
                 }
                 String(data, 0, readTotal, Charsets.UTF_8)
-                    .split('
-')
+                    .split('\n')
                     .let { if (it.isNotEmpty() && it.last().isEmpty()) it.dropLast(1) else it }
                     .take(DUMP_CHUNK_LINES)
                     .map { raw ->
-                        val clean = raw.trimEnd('')
+                        val clean = raw.trimEnd('\r')
                         if (clean.length > MAX_LINE_CHARS) {
                             clean.take(MAX_LINE_CHARS) + " … [truncated]"
                         } else {
@@ -219,8 +217,7 @@ private suspend fun indexLineOffsets(file: File): LongArray = withContext(Dispat
             val n = bis.read(buf)
             if (n <= 0) break
             for (i in 0 until n) {
-                if (buf[i] == '
-'.code.toByte()) {
+                if (buf[i] == '\n'.code.toByte()) {
                     val nextOffset = pos + i + 1L
                     if (nextOffset < file.length()) {
                         offsets.add(nextOffset)
@@ -258,7 +255,7 @@ private suspend fun filterDumpLinesStreaming(
 
             val catPass = when (category) {
                 DumpCategoryFilter.ALL -> true
-                DumpCategoryFilter.STRINGS -> activeSection == "STRINGS" || rawLine.contains(""") || rawLine.contains("str.")
+                DumpCategoryFilter.STRINGS -> activeSection == "STRINGS" || rawLine.contains("\"") || rawLine.contains("str.")
                 DumpCategoryFilter.FUNCTIONS -> activeSection == "FUNCTIONS" || rawLine.contains("fcn.") || rawLine.contains("sym.") || rawLine.contains("size=")
                 DumpCategoryFilter.EXPORTS -> activeSection == "EXPORTS" || upper.contains("EXPORT") || upper.contains("(FUNC)")
                 DumpCategoryFilter.IMPORTS -> activeSection == "IMPORTS" || rawLine.contains("imp.") || upper.contains("IMPORT")
@@ -541,8 +538,7 @@ private fun InAppDumpReaderLayer(
                             val startIdx = viewerListState.firstVisibleItemIndex
                             val pool = filteredPool?.first
                             val copyChunk = if (pool != null) {
-                                pool.drop(startIdx).take(300).joinToString("
-") { it.text }.take(200_000)
+                                pool.drop(startIdx).take(300).joinToString("\n") { it.text }.take(200_000)
                             } else {
                                 lineReader.readWindowText(startIdx, 300).take(200_000)
                             }
