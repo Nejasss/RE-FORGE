@@ -169,7 +169,7 @@ fun SavedFilesScreen(
                 items(state.savedForgeFiles, key = { it.file.absolutePath }) { item ->
                     SavedForgeFileCard(
                         item = item,
-                        onReadDump = { viewModel.openDumpViewer(item, compact = true) },
+                        onReadDump = { viewModel.openDumpViewer(item, compact = false) },
                         onOpenTerminal = {
                             viewModel.openSavedForgeFileInWorkstation(item.file)
                             onNavigateToTerminal()
