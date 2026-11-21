@@ -87,6 +87,8 @@ import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
 import org.bimz.reforge.ui.theme.ForgeAmber
 import org.bimz.reforge.ui.theme.ForgeBg
+import org.bimz.reforge.ui.theme.ForgeColorTokens
+import org.bimz.reforge.ui.theme.LocalForgeColors
 import org.bimz.reforge.ui.theme.ForgeBorder
 import org.bimz.reforge.ui.theme.ForgeCyan
 import org.bimz.reforge.ui.theme.ForgeElevated
@@ -712,10 +714,10 @@ fun ToolsScreen(
     }
 }
 
-private fun highlightTerminalOutput(raw: String, isError: Boolean): AnnotatedString {
+private fun highlightTerminalOutput(raw: String, isError: Boolean, tokens: ForgeColorTokens): AnnotatedString {
     if (isError) {
         return buildAnnotatedString {
-            withStyle(SpanStyle(color = ForgeRose)) {
+            withStyle(SpanStyle(color = tokens.rose)) {
                 append(raw)
             }
         }
@@ -730,12 +732,12 @@ private fun highlightTerminalOutput(raw: String, isError: Boolean): AnnotatedStr
             val trimmed = line.trimStart()
             when {
                 trimmed.startsWith(";--") || trimmed.startsWith("//") || trimmed.startsWith("#") -> {
-                    withStyle(SpanStyle(color = ForgeEmerald, fontWeight = FontWeight.Medium)) {
+                    withStyle(SpanStyle(color = tokens.emerald, fontWeight = FontWeight.Medium)) {
                         append(line)
                     }
                 }
                 trimmed.startsWith("✓") || trimmed.startsWith("[r2]") || trimmed.startsWith("[dump]") -> {
-                    withStyle(SpanStyle(color = ForgeCyan, fontWeight = FontWeight.SemiBold)) {
+                    withStyle(SpanStyle(color = tokens.cyan, fontWeight = FontWeight.SemiBold)) {
                         append(line)
                     }
                 }
@@ -743,19 +745,19 @@ private fun highlightTerminalOutput(raw: String, isError: Boolean): AnnotatedStr
                     var cursor = 0
                     val matches = mutableListOf<Triple<IntRange, Color, FontWeight>>()
                     addrRegex.findAll(line).forEach { m ->
-                        matches.add(Triple(m.range, ForgeCyan, FontWeight.SemiBold))
+                        matches.add(Triple(m.range, tokens.cyan, FontWeight.SemiBold))
                     }
                     stringRegex.findAll(line).forEach { m ->
-                        matches.add(Triple(m.range, ForgeAmber, FontWeight.Normal))
+                        matches.add(Triple(m.range, tokens.amber, FontWeight.Normal))
                     }
                     branchRegex.findAll(line).forEach { m ->
-                        matches.add(Triple(m.range, ForgeRose, FontWeight.Bold))
+                        matches.add(Triple(m.range, tokens.rose, FontWeight.Bold))
                     }
                     val sorted = matches.sortedBy { it.first.first }
                     for ((range, color, weight) in sorted) {
                         if (range.first < cursor) continue
                         if (range.first > cursor) {
-                            withStyle(SpanStyle(color = ForgeTextPrimary)) {
+                            withStyle(SpanStyle(color = tokens.textPrimary)) {
                                 append(line.substring(cursor, range.first))
                             }
                         }
@@ -765,7 +767,7 @@ private fun highlightTerminalOutput(raw: String, isError: Boolean): AnnotatedStr
                         cursor = range.last + 1
                     }
                     if (cursor < line.length) {
-                        withStyle(SpanStyle(color = ForgeTextPrimary)) {
+                        withStyle(SpanStyle(color = tokens.textPrimary)) {
                             append(line.substring(cursor))
                         }
                     }

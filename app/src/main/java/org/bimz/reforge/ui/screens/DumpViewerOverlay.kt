@@ -90,6 +90,8 @@ import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
 import org.bimz.reforge.ui.theme.ForgeAmber
 import org.bimz.reforge.ui.theme.ForgeBg
+import org.bimz.reforge.ui.theme.ForgeColorTokens
+import org.bimz.reforge.ui.theme.LocalForgeColors
 import org.bimz.reforge.ui.theme.ForgeBorder
 import org.bimz.reforge.ui.theme.ForgeCyan
 import org.bimz.reforge.ui.theme.ForgeElevated
@@ -847,12 +849,12 @@ private fun InAppDumpReaderLayer(
     }
 }
 
-private fun styleDumpLineOverlay(line: String, query: String): AnnotatedString {
+private fun styleDumpLineOverlay(line: String, query: String, tokens: ForgeColorTokens): AnnotatedString {
     val baseColor = when {
-        line.startsWith("[") && line.endsWith("]") -> ForgeCyan
-        line.startsWith("//") || line.startsWith("#") || line.startsWith(";") || line.startsWith("=") -> ForgeEmerald
-        line.startsWith("0x") -> ForgeCyan
-        else -> ForgeTextPrimary
+        line.startsWith("[") && line.endsWith("]") -> tokens.cyan
+        line.startsWith("//") || line.startsWith("#") || line.startsWith(";") || line.startsWith("=") -> tokens.emerald
+        line.startsWith("0x") -> tokens.cyan
+        else -> tokens.textPrimary
     }
     val q = query.trim()
     if (q.isEmpty()) {
@@ -875,8 +877,8 @@ private fun styleDumpLineOverlay(line: String, query: String): AnnotatedString {
             }
             withStyle(
                 SpanStyle(
-                    color = ForgeBg,
-                    background = ForgeAmber,
+                    color = tokens.bg,
+                    background = tokens.amber,
                     fontWeight = FontWeight.Bold
                 )
             ) {
