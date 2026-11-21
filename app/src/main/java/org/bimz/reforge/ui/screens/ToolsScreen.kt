@@ -802,8 +802,9 @@ private fun ConsoleEntryBlock(
             entry.output
         }
     }
-    val highlighted = remember(visibleText, entry.isError) {
-        highlightTerminalOutput(visibleText, entry.isError, LocalForgeColors.current)
+    val forgeTokens = LocalForgeColors.current
+    val highlighted = remember(visibleText, entry.isError, forgeTokens) {
+        highlightTerminalOutput(visibleText, entry.isError, forgeTokens)
     }
 
     Surface(

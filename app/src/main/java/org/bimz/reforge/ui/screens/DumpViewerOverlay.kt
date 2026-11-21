@@ -708,8 +708,9 @@ private fun InAppDumpReaderLayer(
                                     verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
                                     items(slice.entries, key = { it.lineNumber }) { entry ->
-                                        val styledLine = remember(entry.text, searchQuery) {
-                                            styleDumpLineOverlay(entry.text, searchQuery, LocalForgeColors.current)
+                                        val forgeTokens = LocalForgeColors.current
+                                        val styledLine = remember(entry.text, searchQuery, forgeTokens) {
+                                            styleDumpLineOverlay(entry.text, searchQuery, forgeTokens)
                                         }
                                         Row(verticalAlignment = Alignment.Top) {
                                             Text(
