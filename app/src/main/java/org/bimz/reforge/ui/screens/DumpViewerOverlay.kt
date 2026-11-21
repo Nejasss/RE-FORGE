@@ -4,14 +4,17 @@ import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.util.LruCache
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
@@ -39,13 +42,11 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Close
 import androidx.compose.material.icons.outlined.ContentCopy
 import androidx.compose.material.icons.outlined.Description
-import androidx.compose.material.icons.outlined.FirstPage
 import androidx.compose.material.icons.outlined.Fullscreen
 import androidx.compose.material.icons.outlined.FullscreenExit
-import androidx.compose.material.icons.outlined.LastPage
+import androidx.compose.material.icons.outlined.KeyboardArrowDown
+import androidx.compose.material.icons.outlined.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Minimize
-import androidx.compose.material.icons.outlined.NavigateBefore
-import androidx.compose.material.icons.outlined.NavigateNext
 import androidx.compose.material.icons.outlined.Search
 import androidx.compose.material.icons.outlined.Share
 import androidx.compose.material3.AlertDialog
@@ -57,17 +58,21 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.SpanStyle
@@ -84,16 +89,16 @@ import androidx.compose.ui.unit.sp
 import androidx.core.content.FileProvider
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.bimz.reforge.storage.SavedForgeFile
 import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
+import org.bimz.reforge.ui.theme.DarkForgeTokens
 import org.bimz.reforge.ui.theme.ForgeAmber
 import org.bimz.reforge.ui.theme.ForgeBg
-import org.bimz.reforge.ui.theme.DarkForgeTokens
-import org.bimz.reforge.ui.theme.ForgeColorTokens
-import org.bimz.reforge.ui.theme.LocalForgeColors
 import org.bimz.reforge.ui.theme.ForgeBorder
+import org.bimz.reforge.ui.theme.ForgeColorTokens
 import org.bimz.reforge.ui.theme.ForgeCyan
 import org.bimz.reforge.ui.theme.ForgeElevated
 import org.bimz.reforge.ui.theme.ForgeEmerald
@@ -102,6 +107,7 @@ import org.bimz.reforge.ui.theme.ForgeSurface
 import org.bimz.reforge.ui.theme.ForgeTextMuted
 import org.bimz.reforge.ui.theme.ForgeTextPrimary
 import org.bimz.reforge.ui.theme.ForgeTextSecondary
+import org.bimz.reforge.ui.theme.LocalForgeColors
 import java.io.BufferedInputStream
 import java.io.BufferedReader
 import java.io.File
@@ -111,9 +117,9 @@ import java.io.RandomAccessFile
 import java.util.Locale
 import kotlin.math.roundToInt
 
-private const val DUMP_PAGE_LINES = 250
+private const val DUMP_CHUNK_LINES = 256
 private const val MAX_LINE_CHARS = 512
-private const val MAX_FILTERED_MATCHES = 10_000
+private const val MAX_FILTERED_MATCHES = 25_000
 
 private enum class DumpCategoryFilter(val label: String) {
     ALL("All"),
@@ -130,13 +136,77 @@ private data class DumpLineEntry(
     val text: String
 )
 
-private data class PagedDumpSlice(
-    val entries: List<DumpLineEntry>,
-    val totalMatches: Int,
-    val totalPages: Int,
-    val currentPage: Int,
-    val truncatedMatches: Boolean
-)
+private class ChunkedDumpLineReader(
+    private val file: File,
+    private val lineOffsets: LongArray
+) {
+    private val cache = LruCache<Int, List<String>>(64)
+    val totalLines: Int = lineOffsets.size.coerceAtLeast(1)
+
+    fun getLine(lineIndex: Int): DumpLineEntry {
+        if (!file.exists() || file.length() == 0L) {
+            return DumpLineEntry(1, "<Empty file>")
+        }
+        val safeIdx = lineIndex.coerceIn(0, totalLines - 1)
+        val blockIdx = safeIdx / DUMP_CHUNK_LINES
+        val inBlockIdx = safeIdx % DUMP_CHUNK_LINES
+        val block = getBlock(blockIdx)
+        val text = block.getOrElse(inBlockIdx) { "" }
+        return DumpLineEntry(safeIdx + 1, text)
+    }
+
+    fun readWindowText(startLineIndex: Int, count: Int): String {
+        val safeStart = startLineIndex.coerceIn(0, totalLines - 1)
+        val safeEnd = minOf(safeStart + count, totalLines)
+        val sb = StringBuilder()
+        for (i in safeStart until safeEnd) {
+            if (sb.isNotEmpty()) sb.append('
+')
+            sb.append(getLine(i).text)
+        }
+        return sb.toString()
+    }
+
+    private fun getBlock(blockIdx: Int): List<String> {
+        cache.get(blockIdx)?.let { return it }
+        val startLine = blockIdx * DUMP_CHUNK_LINES
+        val endLine = minOf(startLine + DUMP_CHUNK_LINES, totalLines)
+        if (startLine >= totalLines) return emptyList()
+
+        val startByte = lineOffsets[startLine]
+        val endByte = if (endLine < lineOffsets.size) lineOffsets[endLine] else file.length()
+        val byteLen = (endByte - startByte).coerceIn(0L, 512L * 1024L).toInt()
+
+        val lines = runCatching {
+            RandomAccessFile(file, "r").use { raf ->
+                raf.seek(startByte)
+                val data = ByteArray(byteLen)
+                var readTotal = 0
+                while (readTotal < byteLen) {
+                    val r = raf.read(data, readTotal, byteLen - readTotal)
+                    if (r <= 0) break
+                    readTotal += r
+                }
+                String(data, 0, readTotal, Charsets.UTF_8)
+                    .split('
+')
+                    .let { if (it.isNotEmpty() && it.last().isEmpty()) it.dropLast(1) else it }
+                    .take(DUMP_CHUNK_LINES)
+                    .map { raw ->
+                        val clean = raw.trimEnd('')
+                        if (clean.length > MAX_LINE_CHARS) {
+                            clean.take(MAX_LINE_CHARS) + " … [truncated]"
+                        } else {
+                            clean
+                        }
+                    }
+            }
+        }.getOrDefault(emptyList())
+
+        cache.put(blockIdx, lines)
+        return lines
+    }
+}
 
 private suspend fun indexLineOffsets(file: File): LongArray = withContext(Dispatchers.IO) {
     if (!file.exists() || file.length() == 0L) return@withContext longArrayOf(0L)
@@ -149,7 +219,8 @@ private suspend fun indexLineOffsets(file: File): LongArray = withContext(Dispat
             val n = bis.read(buf)
             if (n <= 0) break
             for (i in 0 until n) {
-                if (buf[i] == '\n'.code.toByte()) {
+                if (buf[i] == '
+'.code.toByte()) {
                     val nextOffset = pos + i + 1L
                     if (nextOffset < file.length()) {
                         offsets.add(nextOffset)
@@ -161,63 +232,6 @@ private suspend fun indexLineOffsets(file: File): LongArray = withContext(Dispat
     }
     offsets.toLongArray()
 }
-
-private suspend fun readRawDumpPage(file: File, lineOffsets: LongArray, pageIndex: Int): PagedDumpSlice =
-    withContext(Dispatchers.IO) {
-        val totalLines = lineOffsets.size.coerceAtLeast(1)
-        val totalPages = ((totalLines + DUMP_PAGE_LINES - 1) / DUMP_PAGE_LINES).coerceAtLeast(1)
-        val safePage = pageIndex.coerceIn(0, totalPages - 1)
-        val startLineIdx = safePage * DUMP_PAGE_LINES
-        val endLineIdx = minOf(startLineIdx + DUMP_PAGE_LINES, totalLines)
-
-        if (!file.exists() || file.length() == 0L) {
-            return@withContext PagedDumpSlice(
-                entries = listOf(DumpLineEntry(1, "<Empty file>")),
-                totalMatches = 0,
-                totalPages = 1,
-                currentPage = 0,
-                truncatedMatches = false
-            )
-        }
-
-        val startByte = lineOffsets[startLineIdx]
-        val endByte = if (endLineIdx < lineOffsets.size) lineOffsets[endLineIdx] else file.length()
-        val byteLen = (endByte - startByte).coerceIn(0L, 512L * 1024L).toInt()
-
-        val rawChunk = RandomAccessFile(file, "r").use { raf ->
-            raf.seek(startByte)
-            val data = ByteArray(byteLen)
-            var readTotal = 0
-            while (readTotal < byteLen) {
-                val r = raf.read(data, readTotal, byteLen - readTotal)
-                if (r <= 0) break
-                readTotal += r
-            }
-            String(data, 0, readTotal, Charsets.UTF_8)
-        }
-
-        val entries = rawChunk
-            .split('\n')
-            .let { if (it.isNotEmpty() && it.last().isEmpty()) it.dropLast(1) else it }
-            .take(DUMP_PAGE_LINES)
-            .mapIndexed { idx, line ->
-                val clean = line.trimEnd('\r')
-                val bounded = if (clean.length > MAX_LINE_CHARS) {
-                    clean.take(MAX_LINE_CHARS) + " … [truncated]"
-                } else {
-                    clean
-                }
-                DumpLineEntry(startLineIdx + idx + 1, bounded)
-            }
-
-        PagedDumpSlice(
-            entries = entries,
-            totalMatches = totalLines,
-            totalPages = totalPages,
-            currentPage = safePage,
-            truncatedMatches = false
-        )
-    }
 
 private suspend fun filterDumpLinesStreaming(
     file: File,
@@ -244,7 +258,7 @@ private suspend fun filterDumpLinesStreaming(
 
             val catPass = when (category) {
                 DumpCategoryFilter.ALL -> true
-                DumpCategoryFilter.STRINGS -> activeSection == "STRINGS" || rawLine.contains("\"") || rawLine.contains("str.")
+                DumpCategoryFilter.STRINGS -> activeSection == "STRINGS" || rawLine.contains(""") || rawLine.contains("str.")
                 DumpCategoryFilter.FUNCTIONS -> activeSection == "FUNCTIONS" || rawLine.contains("fcn.") || rawLine.contains("sym.") || rawLine.contains("size=")
                 DumpCategoryFilter.EXPORTS -> activeSection == "EXPORTS" || upper.contains("EXPORT") || upper.contains("(FUNC)")
                 DumpCategoryFilter.IMPORTS -> activeSection == "IMPORTS" || rawLine.contains("imp.") || upper.contains("IMPORT")
@@ -358,7 +372,7 @@ fun DumpViewerOverlay(
         }
     }
 
-    // 2. In-App Dump Viewer Card (Compact Modal ~76% height by default, or Fullscreen toggleable)
+    // 2. In-App Continuous-Scroll Dump Viewer Card
     if (activeFile != null) {
         InAppDumpReaderLayer(
             target = activeFile,
@@ -379,12 +393,11 @@ private fun InAppDumpReaderLayer(
     onClose: () -> Unit
 ) {
     val context = LocalContext.current
+    val scope = rememberCoroutineScope()
     var lineOffsets by remember(target) { mutableStateOf(longArrayOf(0L)) }
     var searchQuery by remember(target) { mutableStateOf("") }
     var selectedFilter by remember(target) { mutableStateOf(DumpCategoryFilter.ALL) }
-    var currentPage by remember(target) { mutableIntStateOf(0) }
     var filteredPool by remember(target) { mutableStateOf<Pair<List<DumpLineEntry>, Boolean>?>(null) }
-    var pageSlice by remember(target) { mutableStateOf<PagedDumpSlice?>(null) }
     var isLoading by remember(target) { mutableStateOf(true) }
     var wrapLines by remember { mutableStateOf(false) }
     var showJumpDialog by remember { mutableStateOf(false) }
@@ -396,17 +409,16 @@ private fun InAppDumpReaderLayer(
         isLoading = true
         val offsets = runCatching { indexLineOffsets(target.file) }.getOrDefault(longArrayOf(0L))
         lineOffsets = offsets
-        pageSlice = runCatching { readRawDumpPage(target.file, offsets, 0) }.getOrNull()
         isLoading = false
     }
 
+    val lineReader = remember(target, lineOffsets) {
+        ChunkedDumpLineReader(target.file, lineOffsets)
+    }
+
     LaunchedEffect(target, selectedFilter, searchQuery) {
-        currentPage = 0
         if (selectedFilter == DumpCategoryFilter.ALL && searchQuery.isBlank()) {
             filteredPool = null
-            if (lineOffsets.isNotEmpty()) {
-                pageSlice = runCatching { readRawDumpPage(target.file, lineOffsets, 0) }.getOrNull()
-            }
         } else {
             if (searchQuery.isNotEmpty()) delay(180L)
             isLoading = true
@@ -414,40 +426,23 @@ private fun InAppDumpReaderLayer(
                 filterDumpLinesStreaming(target.file, selectedFilter, searchQuery)
             }.getOrDefault(emptyList<DumpLineEntry>() to false)
             filteredPool = res
-            val total = res.first.size
-            val totalPages = ((total + DUMP_PAGE_LINES - 1) / DUMP_PAGE_LINES).coerceAtLeast(1)
-            pageSlice = PagedDumpSlice(
-                entries = res.first.take(DUMP_PAGE_LINES),
-                totalMatches = total,
-                totalPages = totalPages,
-                currentPage = 0,
-                truncatedMatches = res.second
-            )
             isLoading = false
         }
+        viewerListState.scrollToItem(0)
     }
 
-    LaunchedEffect(currentPage, filteredPool) {
-        val pool = filteredPool
-        if (pool == null) {
-            if (!isLoading) {
-                pageSlice = runCatching { readRawDumpPage(target.file, lineOffsets, currentPage) }.getOrNull()
+    val totalDisplayItems = filteredPool?.first?.size ?: lineReader.totalLines
+    val truncatedMatches = filteredPool?.second == true
+    val currentVisibleLine by remember(filteredPool, lineOffsets) {
+        derivedStateOf {
+            val idx = viewerListState.firstVisibleItemIndex
+            val pool = filteredPool?.first
+            if (pool != null) {
+                pool.getOrNull(idx)?.lineNumber ?: (idx + 1)
+            } else {
+                (idx + 1).coerceIn(1, lineReader.totalLines)
             }
-        } else {
-            val total = pool.first.size
-            val totalPages = ((total + DUMP_PAGE_LINES - 1) / DUMP_PAGE_LINES).coerceAtLeast(1)
-            val safePage = currentPage.coerceIn(0, totalPages - 1)
-            val fromIdx = safePage * DUMP_PAGE_LINES
-            val toIdx = minOf(fromIdx + DUMP_PAGE_LINES, total)
-            pageSlice = PagedDumpSlice(
-                entries = if (fromIdx < toIdx) pool.first.subList(fromIdx, toIdx) else emptyList(),
-                totalMatches = total,
-                totalPages = totalPages,
-                currentPage = safePage,
-                truncatedMatches = pool.second
-            )
         }
-        viewerListState.scrollToItem(0)
     }
 
     Box(
@@ -489,6 +484,10 @@ private fun InAppDumpReaderLayer(
                         modifier = Modifier
                             .weight(1f)
                             .padding(start = 4.dp)
+                            .clickable(enabled = !isLoading && totalDisplayItems > 0) {
+                                jumpInput = currentVisibleLine.toString()
+                                showJumpDialog = true
+                            }
                     ) {
                         Text(
                             text = target.name,
@@ -498,10 +497,9 @@ private fun InAppDumpReaderLayer(
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
-                        val s = pageSlice
-                        val sub = if (s != null) {
-                            val truncTag = if (s.truncatedMatches) "+" else ""
-                            "${formatDumpBytes(target.sizeBytes)} • ${s.totalMatches}$truncTag lines • Pg ${s.currentPage + 1}/${s.totalPages}"
+                        val sub = if (!isLoading) {
+                            val truncTag = if (truncatedMatches) "+" else ""
+                            "${formatDumpBytes(target.sizeBytes)} • Ln $currentVisibleLine / $totalDisplayItems$truncTag ▾"
                         } else {
                             "${formatDumpBytes(target.sizeBytes)} • Indexing..."
                         }
@@ -538,15 +536,22 @@ private fun InAppDumpReaderLayer(
                         )
                     }
                     IconButton(
-                        enabled = pageSlice != null,
+                        enabled = !isLoading && totalDisplayItems > 0,
                         onClick = {
-                            val pageText = pageSlice?.entries?.joinToString("\n") { it.text }.orEmpty().take(200_000)
+                            val startIdx = viewerListState.firstVisibleItemIndex
+                            val pool = filteredPool?.first
+                            val copyChunk = if (pool != null) {
+                                pool.drop(startIdx).take(300).joinToString("
+") { it.text }.take(200_000)
+                            } else {
+                                lineReader.readWindowText(startIdx, 300).take(200_000)
+                            }
                             val cb = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                            cb.setPrimaryClip(ClipData.newPlainText(target.name, pageText))
+                            cb.setPrimaryClip(ClipData.newPlainText(target.name, copyChunk))
                         },
                         modifier = Modifier.size(30.dp)
                     ) {
-                        Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy Page", tint = ForgeTextSecondary, modifier = Modifier.size(15.dp))
+                        Icon(Icons.Outlined.ContentCopy, contentDescription = "Copy Visible Lines", tint = ForgeTextSecondary, modifier = Modifier.size(15.dp))
                     }
                     IconButton(
                         onClick = {
@@ -577,7 +582,7 @@ private fun InAppDumpReaderLayer(
                     }
                 }
 
-                // Search Bar + Category Filter Chips
+                // Search Bar + Category Filter Chips + Quick Top/Bottom Jump
                 Column(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -585,53 +590,92 @@ private fun InAppDumpReaderLayer(
                         .padding(horizontal = 8.dp, vertical = 5.dp),
                     verticalArrangement = Arrangement.spacedBy(5.dp)
                 ) {
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = ForgeElevated,
-                        border = BorderStroke(
-                            1.dp,
-                            if (searchQuery.isNotEmpty()) ForgeCyan.copy(alpha = 0.65f) else ForgeBorder
-                        ),
-                        modifier = Modifier.fillMaxWidth()
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(5.dp),
+                        verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Row(
-                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
-                            verticalAlignment = Alignment.CenterVertically
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = ForgeElevated,
+                            border = BorderStroke(
+                                1.dp,
+                                if (searchQuery.isNotEmpty()) ForgeCyan.copy(alpha = 0.65f) else ForgeBorder
+                            ),
+                            modifier = Modifier.weight(1f)
                         ) {
-                            Icon(Icons.Outlined.Search, contentDescription = null, tint = ForgeCyan, modifier = Modifier.size(15.dp))
-                            Spacer(modifier = Modifier.width(7.dp))
-                            Box(modifier = Modifier.weight(1f)) {
-                                if (searchQuery.isEmpty()) {
-                                    Text(
-                                        text = "Search string, symbol, function, offset (0x...)...",
-                                        color = ForgeTextMuted,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.sp
+                            Row(
+                                modifier = Modifier.padding(horizontal = 9.dp, vertical = 6.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Icon(Icons.Outlined.Search, contentDescription = null, tint = ForgeCyan, modifier = Modifier.size(15.dp))
+                                Spacer(modifier = Modifier.width(7.dp))
+                                Box(modifier = Modifier.weight(1f)) {
+                                    if (searchQuery.isEmpty()) {
+                                        Text(
+                                            text = "Search string, symbol, function, offset...",
+                                            color = ForgeTextMuted,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.sp,
+                                            maxLines = 1
+                                        )
+                                    }
+                                    BasicTextField(
+                                        value = searchQuery,
+                                        onValueChange = { searchQuery = it },
+                                        singleLine = true,
+                                        textStyle = TextStyle(
+                                            color = ForgeTextPrimary,
+                                            fontFamily = FontFamily.Monospace,
+                                            fontSize = 11.5.sp
+                                        ),
+                                        cursorBrush = SolidColor(ForgeCyan),
+                                        modifier = Modifier.fillMaxWidth()
                                     )
                                 }
-                                BasicTextField(
-                                    value = searchQuery,
-                                    onValueChange = { searchQuery = it },
-                                    singleLine = true,
-                                    textStyle = TextStyle(
-                                        color = ForgeTextPrimary,
-                                        fontFamily = FontFamily.Monospace,
-                                        fontSize = 11.5.sp
-                                    ),
-                                    cursorBrush = SolidColor(ForgeCyan),
-                                    modifier = Modifier.fillMaxWidth()
-                                )
+                                if (searchQuery.isNotEmpty()) {
+                                    Icon(
+                                        imageVector = Icons.Outlined.Close,
+                                        contentDescription = "Clear search",
+                                        tint = ForgeTextSecondary,
+                                        modifier = Modifier
+                                            .size(15.dp)
+                                            .clickable { searchQuery = "" }
+                                    )
+                                }
                             }
-                            if (searchQuery.isNotEmpty()) {
-                                Icon(
-                                    imageVector = Icons.Outlined.Close,
-                                    contentDescription = "Clear search",
-                                    tint = ForgeTextSecondary,
-                                    modifier = Modifier
-                                        .size(15.dp)
-                                        .clickable { searchQuery = "" }
-                                )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = ForgeElevated,
+                            border = BorderStroke(1.dp, ForgeBorder),
+                            modifier = Modifier.clickable(enabled = totalDisplayItems > 0) {
+                                scope.launch { viewerListState.scrollToItem(0) }
                             }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.KeyboardArrowUp,
+                                contentDescription = "Scroll to Top",
+                                tint = ForgeCyan,
+                                modifier = Modifier.padding(6.dp).size(16.dp)
+                            )
+                        }
+
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = ForgeElevated,
+                            border = BorderStroke(1.dp, ForgeBorder),
+                            modifier = Modifier.clickable(enabled = totalDisplayItems > 0) {
+                                scope.launch { viewerListState.scrollToItem((totalDisplayItems - 1).coerceAtLeast(0)) }
+                            }
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.KeyboardArrowDown,
+                                contentDescription = "Scroll to Bottom",
+                                tint = ForgeCyan,
+                                modifier = Modifier.padding(6.dp).size(16.dp)
+                            )
                         }
                     }
 
@@ -665,15 +709,17 @@ private fun InAppDumpReaderLayer(
                     }
                 }
 
-                // Content List
+                // Continuous Scroll Content List + Fast Scrollbar
                 Box(
                     modifier = Modifier
                         .weight(1f)
                         .fillMaxWidth()
-                        .background(Color(0xFF06090E))
-                        .padding(horizontal = 8.dp, vertical = 4.dp)
+                        .background(ForgeBg)
+                        .padding(start = 8.dp, end = 4.dp, top = 4.dp, bottom = 4.dp)
                 ) {
-                    val slice = pageSlice
+                    val pool = filteredPool?.first
+                    val isEmptyResult = if (pool != null) pool.isEmpty() else lineReader.totalLines == 0
+
                     when {
                         isLoading -> {
                             Text(
@@ -684,7 +730,7 @@ private fun InAppDumpReaderLayer(
                                 modifier = Modifier.padding(10.dp)
                             )
                         }
-                        slice == null || slice.entries.isEmpty() -> {
+                        isEmptyResult -> {
                             Text(
                                 text = "No matching lines found for '${selectedFilter.label}' and query '$searchQuery'.",
                                 color = ForgeTextMuted,
@@ -694,119 +740,67 @@ private fun InAppDumpReaderLayer(
                             )
                         }
                         else -> {
+                            val forgeTokens = LocalForgeColors.current
                             SelectionContainer {
                                 val listModifier = if (wrapLines) {
-                                    Modifier.fillMaxSize()
+                                    Modifier
+                                        .fillMaxSize()
+                                        .padding(end = 16.dp)
                                 } else {
                                     Modifier
                                         .fillMaxSize()
+                                        .padding(end = 16.dp)
                                         .horizontalScroll(rememberScrollState())
                                 }
                                 LazyColumn(
                                     state = viewerListState,
                                     modifier = listModifier,
+                                    contentPadding = PaddingValues(vertical = 2.dp),
                                     verticalArrangement = Arrangement.spacedBy(2.dp)
                                 ) {
-                                    items(slice.entries, key = { it.lineNumber }) { entry ->
-                                        val forgeTokens = LocalForgeColors.current
-                                        val styledLine = remember(entry.text, searchQuery, forgeTokens) {
-                                            styleDumpLineOverlay(entry.text, searchQuery, forgeTokens)
-                                        }
-                                        Row(verticalAlignment = Alignment.Top) {
-                                            Text(
-                                                text = String.format(Locale.US, "%5d │ ", entry.lineNumber),
-                                                color = ForgeTextMuted,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 10.sp,
-                                                lineHeight = 14.5.sp
+                                    if (pool != null) {
+                                        items(pool, key = { it.lineNumber }) { entry ->
+                                            DumpLineRow(
+                                                entry = entry,
+                                                searchQuery = searchQuery,
+                                                wrapLines = wrapLines,
+                                                tokens = forgeTokens
                                             )
-                                            Text(
-                                                text = styledLine,
-                                                fontFamily = FontFamily.Monospace,
-                                                fontSize = 10.5.sp,
-                                                lineHeight = 14.5.sp,
-                                                softWrap = wrapLines
+                                        }
+                                    } else {
+                                        items(
+                                            count = lineReader.totalLines,
+                                            key = { it }
+                                        ) { rowIndex ->
+                                            val entry = remember(rowIndex, lineReader) {
+                                                lineReader.getLine(rowIndex)
+                                            }
+                                            DumpLineRow(
+                                                entry = entry,
+                                                searchQuery = searchQuery,
+                                                wrapLines = wrapLines,
+                                                tokens = forgeTokens
                                             )
                                         }
                                     }
                                 }
                             }
-                        }
-                    }
-                }
 
-                // Guaranteed Visible Pagination Controls Bar
-                val slice = pageSlice
-                if (slice != null) {
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .background(ForgeSurface)
-                            .padding(horizontal = 10.dp, vertical = 5.dp),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        IconButton(
-                            onClick = { currentPage = 0 },
-                            enabled = slice.currentPage > 0,
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(
-                                Icons.Outlined.FirstPage,
-                                contentDescription = "First Page",
-                                tint = if (slice.currentPage > 0) ForgeCyan else ForgeTextMuted
-                            )
-                        }
-                        IconButton(
-                            onClick = { if (currentPage > 0) currentPage -= 1 },
-                            enabled = slice.currentPage > 0,
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(
-                                Icons.Outlined.NavigateBefore,
-                                contentDescription = "Previous Page",
-                                tint = if (slice.currentPage > 0) ForgeCyan else ForgeTextMuted
-                            )
-                        }
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = ForgeElevated,
-                            border = BorderStroke(1.dp, ForgeCyan.copy(alpha = 0.45f)),
-                            modifier = Modifier.clickable {
-                                jumpInput = (slice.currentPage + 1).toString()
-                                showJumpDialog = true
+                            if (totalDisplayItems > 1) {
+                                DumpFastScrollBar(
+                                    totalItems = totalDisplayItems,
+                                    firstVisibleItem = viewerListState.firstVisibleItemIndex,
+                                    onScrubToItem = { targetIdx ->
+                                        scope.launch {
+                                            viewerListState.scrollToItem(targetIdx.coerceIn(0, totalDisplayItems - 1))
+                                        }
+                                    },
+                                    modifier = Modifier
+                                        .align(Alignment.CenterEnd)
+                                        .fillMaxHeight()
+                                        .width(14.dp)
+                                )
                             }
-                        ) {
-                            Text(
-                                text = "Page ${slice.currentPage + 1} / ${slice.totalPages} ▾",
-                                color = ForgeTextPrimary,
-                                fontFamily = FontFamily.Monospace,
-                                fontSize = 11.5.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 5.dp)
-                            )
-                        }
-                        IconButton(
-                            onClick = { if (currentPage < slice.totalPages - 1) currentPage += 1 },
-                            enabled = slice.currentPage < slice.totalPages - 1,
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(
-                                Icons.Outlined.NavigateNext,
-                                contentDescription = "Next Page",
-                                tint = if (slice.currentPage < slice.totalPages - 1) ForgeCyan else ForgeTextMuted
-                            )
-                        }
-                        IconButton(
-                            onClick = { currentPage = slice.totalPages - 1 },
-                            enabled = slice.currentPage < slice.totalPages - 1,
-                            modifier = Modifier.size(34.dp)
-                        ) {
-                            Icon(
-                                Icons.Outlined.LastPage,
-                                contentDescription = "Last Page",
-                                tint = if (slice.currentPage < slice.totalPages - 1) ForgeCyan else ForgeTextMuted
-                            )
                         }
                     }
                 }
@@ -814,13 +808,18 @@ private fun InAppDumpReaderLayer(
         }
     }
 
-    val totalPg = pageSlice?.totalPages ?: 1
     if (showJumpDialog) {
+        val maxVal = totalDisplayItems.coerceAtLeast(1)
         AlertDialog(
             onDismissRequest = { showJumpDialog = false },
             containerColor = ForgeSurface,
             title = {
-                Text("Jump to Page (1 - $totalPg)", color = ForgeTextPrimary, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(
+                    text = if (filteredPool != null) "Jump to Match (1 - $maxVal)" else "Jump to Line (1 - $maxVal)",
+                    color = ForgeTextPrimary,
+                    fontSize = 14.sp,
+                    fontWeight = FontWeight.Bold
+                )
             },
             text = {
                 OutlinedTextField(
@@ -828,14 +827,15 @@ private fun InAppDumpReaderLayer(
                     onValueChange = { jumpInput = it.filter { ch -> ch.isDigit() } },
                     singleLine = true,
                     keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
-                    label = { Text("Page number") }
+                    label = { Text("Line number") }
                 )
             },
             confirmButton = {
                 TextButton(onClick = {
-                    val targetPage = jumpInput.toIntOrNull()
-                    if (targetPage != null && totalPg > 0) {
-                        currentPage = (targetPage - 1).coerceIn(0, totalPg - 1)
+                    val targetLine = jumpInput.toIntOrNull()
+                    if (targetLine != null && maxVal > 0) {
+                        val targetIdx = (targetLine - 1).coerceIn(0, maxVal - 1)
+                        scope.launch { viewerListState.scrollToItem(targetIdx) }
                     }
                     showJumpDialog = false
                 }) {
@@ -848,6 +848,83 @@ private fun InAppDumpReaderLayer(
                 }
             }
         )
+    }
+}
+
+@Composable
+private fun DumpLineRow(
+    entry: DumpLineEntry,
+    searchQuery: String,
+    wrapLines: Boolean,
+    tokens: ForgeColorTokens
+) {
+    val styledLine = remember(entry.text, searchQuery, tokens) {
+        styleDumpLineOverlay(entry.text, searchQuery, tokens)
+    }
+    Row(verticalAlignment = Alignment.Top) {
+        Text(
+            text = String.format(Locale.US, "%5d │ ", entry.lineNumber),
+            color = tokens.textMuted,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.sp,
+            lineHeight = 14.5.sp
+        )
+        Text(
+            text = styledLine,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 10.5.sp,
+            lineHeight = 14.5.sp,
+            softWrap = wrapLines
+        )
+    }
+}
+
+@Composable
+private fun DumpFastScrollBar(
+    totalItems: Int,
+    firstVisibleItem: Int,
+    onScrubToItem: (Int) -> Unit,
+    modifier: Modifier = Modifier
+) {
+    var trackHeightPx by remember { mutableIntStateOf(1) }
+    val fraction = if (totalItems <= 1) 0f else (firstVisibleItem.toFloat() / (totalItems - 1)).coerceIn(0f, 1f)
+
+    Box(
+        modifier = modifier
+            .onSizeChanged { trackHeightPx = it.height.coerceAtLeast(1) }
+            .pointerInput(totalItems) {
+                detectVerticalDragGestures { change, _ ->
+                    change.consume()
+                    val y = change.position.y.coerceIn(0f, trackHeightPx.toFloat())
+                    val ratio = y / trackHeightPx.toFloat()
+                    onScrubToItem((ratio * (totalItems - 1)).toInt())
+                }
+            }
+            .padding(vertical = 4.dp),
+        contentAlignment = Alignment.TopCenter
+    ) {
+        Box(
+            modifier = Modifier
+                .width(3.5.dp)
+                .fillMaxHeight()
+                .clip(RoundedCornerShape(2.dp))
+                .background(ForgeBorder)
+        )
+        Column(modifier = Modifier.fillMaxHeight()) {
+            if (fraction > 0.001f) {
+                Spacer(modifier = Modifier.weight(fraction))
+            }
+            Box(
+                modifier = Modifier
+                    .width(7.dp)
+                    .height(30.dp)
+                    .clip(RoundedCornerShape(4.dp))
+                    .background(ForgeCyan)
+            )
+            if (1f - fraction > 0.001f) {
+                Spacer(modifier = Modifier.weight(1f - fraction))
+            }
+        }
     }
 }
 
