@@ -715,7 +715,17 @@ fun ToolsScreen(
     }
 }
 
-private fun highlightTerminalOutput(raw: String, isError: Boolean, tokens: ForgeColorTokens = DarkForgeTokens): AnnotatedString {
+private val TERMINAL_ADDR_REGEX = Regex("0x[0-9a-fA-F]+")
+private val TERMINAL_STRING_REGEX = Regex("\"[^\"]*\"")
+private val TERMINAL_BRANCH_REGEX = Regex("\\b(bl|blr|b|br|beq|bne|bgt|blt|bge|ble|cbz|cbnz|tbz|tbnz|ret|nop|call|jmp|je|jne)\\b")
+private const val TERMINAL_COLLAPSE_LINES = 20
+private const val TERMINAL_MAX_INLINE_EXPAND_LINES = 250
+
+private fun highlightTerminalOutput(
+    raw: String,
+    isError: Boolean,
+    tokens: ForgeColorTokens = DarkForgeTokens
+): AnnotatedString {
     if (isError) {
         return buildAnnotatedString {
             withStyle(SpanStyle(color = tokens.rose)) {
@@ -723,35 +733,33 @@ private fun highlightTerminalOutput(raw: String, isError: Boolean, tokens: Forge
             }
         }
     }
-    val addrRegex = Regex("0x[0-9a-fA-F]+")
-    val stringRegex = Regex("\"[^\"]*\"")
-    val branchRegex = Regex("\\b(bl|blr|b|br|beq|bne|bgt|blt|bge|ble|cbz|cbnz|tbz|tbnz|ret|nop|call|jmp|je|jne)\\b")
 
     return buildAnnotatedString {
         val lines = raw.split('\n')
         lines.forEachIndexed { idx, line ->
-            val trimmed = line.trimStart()
+            val boundedLine = if (line.length > 600) line.take(600) + " …" else line
+            val trimmed = boundedLine.trimStart()
             when {
                 trimmed.startsWith(";--") || trimmed.startsWith("//") || trimmed.startsWith("#") -> {
                     withStyle(SpanStyle(color = tokens.emerald, fontWeight = FontWeight.Medium)) {
-                        append(line)
+                        append(boundedLine)
                     }
                 }
                 trimmed.startsWith("✓") || trimmed.startsWith("[r2]") || trimmed.startsWith("[dump]") -> {
                     withStyle(SpanStyle(color = tokens.cyan, fontWeight = FontWeight.SemiBold)) {
-                        append(line)
+                        append(boundedLine)
                     }
                 }
                 else -> {
                     var cursor = 0
                     val matches = mutableListOf<Triple<IntRange, Color, FontWeight>>()
-                    addrRegex.findAll(line).forEach { m ->
+                    TERMINAL_ADDR_REGEX.findAll(boundedLine).forEach { m ->
                         matches.add(Triple(m.range, tokens.cyan, FontWeight.SemiBold))
                     }
-                    stringRegex.findAll(line).forEach { m ->
+                    TERMINAL_STRING_REGEX.findAll(boundedLine).forEach { m ->
                         matches.add(Triple(m.range, tokens.amber, FontWeight.Normal))
                     }
-                    branchRegex.findAll(line).forEach { m ->
+                    TERMINAL_BRANCH_REGEX.findAll(boundedLine).forEach { m ->
                         matches.add(Triple(m.range, tokens.rose, FontWeight.Bold))
                     }
                     val sorted = matches.sortedBy { it.first.first }
@@ -759,17 +767,17 @@ private fun highlightTerminalOutput(raw: String, isError: Boolean, tokens: Forge
                         if (range.first < cursor) continue
                         if (range.first > cursor) {
                             withStyle(SpanStyle(color = tokens.textPrimary)) {
-                                append(line.substring(cursor, range.first))
+                                append(boundedLine.substring(cursor, range.first))
                             }
                         }
                         withStyle(SpanStyle(color = color, fontWeight = weight)) {
-                            append(line.substring(range.first, range.last + 1))
+                            append(boundedLine.substring(range.first, range.last + 1))
                         }
                         cursor = range.last + 1
                     }
-                    if (cursor < line.length) {
+                    if (cursor < boundedLine.length) {
                         withStyle(SpanStyle(color = tokens.textPrimary)) {
-                            append(line.substring(cursor))
+                            append(boundedLine.substring(cursor))
                         }
                     }
                 }
@@ -778,8 +786,6 @@ private fun highlightTerminalOutput(raw: String, isError: Boolean, tokens: Forge
         }
     }
 }
-
-private const val TERMINAL_COLLAPSE_LINES = 20
 
 @Composable
 private fun ConsoleEntryBlock(
@@ -795,16 +801,35 @@ private fun ConsoleEntryBlock(
     }
     val hiddenCount = (allLines.size - TERMINAL_COLLAPSE_LINES).coerceAtLeast(0)
     val shouldCollapse = !entry.isRunning && hiddenCount > 0 && !isExpanded
-    val visibleText = remember(allLines, shouldCollapse) {
-        if (shouldCollapse) {
-            allLines.take(TERMINAL_COLLAPSE_LINES).joinToString("\n")
-        } else {
-            entry.output
+    val isStreamingHuge = entry.isRunning && allLines.size > TERMINAL_COLLAPSE_LINES
+    val isHugeExpanded = isExpanded && allLines.size > TERMINAL_MAX_INLINE_EXPAND_LINES
+
+    val visibleText = remember(allLines, shouldCollapse, isStreamingHuge, isHugeExpanded) {
+        when {
+            isStreamingHuge -> allLines.takeLast(TERMINAL_COLLAPSE_LINES).joinToString("\n")
+            shouldCollapse -> allLines.take(TERMINAL_COLLAPSE_LINES).joinToString("\n")
+            isHugeExpanded -> allLines.take(TERMINAL_MAX_INLINE_EXPAND_LINES).joinToString("\n")
+            else -> entry.output
         }
     }
     val forgeTokens = LocalForgeColors.current
-    val highlighted = remember(visibleText, entry.isError, forgeTokens) {
-        highlightTerminalOutput(visibleText, entry.isError, forgeTokens)
+    var highlighted by remember(visibleText, entry.isError, forgeTokens) {
+        mutableStateOf(
+            if (visibleText.length <= 16_000) {
+                highlightTerminalOutput(visibleText, entry.isError, forgeTokens)
+            } else {
+                AnnotatedString(visibleText)
+            }
+        )
+    }
+
+    LaunchedEffect(visibleText, entry.isError, forgeTokens) {
+        if (visibleText.isNotBlank() && visibleText.length > 16_000) {
+            val computed = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+                highlightTerminalOutput(visibleText, entry.isError, forgeTokens)
+            }
+            highlighted = computed
+        }
     }
 
     Surface(
@@ -823,6 +848,16 @@ private fun ConsoleEntryBlock(
                     fontWeight = FontWeight.Bold
                 )
                 Spacer(modifier = Modifier.height(5.dp))
+            }
+
+            if (isStreamingHuge) {
+                Text(
+                    text = "… streaming ${allLines.size} lines (showing latest $TERMINAL_COLLAPSE_LINES lines)",
+                    color = ForgeTextMuted,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp,
+                    modifier = Modifier.padding(bottom = 4.dp)
+                )
             }
 
             if (visibleText.isNotBlank()) {
@@ -852,6 +887,16 @@ private fun ConsoleEntryBlock(
                 }
             }
 
+            if (isHugeExpanded) {
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Showing first $TERMINAL_MAX_INLINE_EXPAND_LINES of ${allLines.size} lines to prevent UI freeze. Use \"Save to RE FORGE\" to open full dump safely.",
+                    color = ForgeAmber,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 10.sp
+                )
+            }
+
             if (!entry.isRunning && hiddenCount > 0) {
                 Spacer(modifier = Modifier.height(6.dp))
                 Surface(
@@ -866,7 +911,7 @@ private fun ConsoleEntryBlock(
                         text = if (isExpanded) {
                             "▲ Collapse output (${allLines.size} lines)"
                         } else {
-                            "▼ +$hiddenCount more lines • Tap to expand full output"
+                            "▼ +$hiddenCount more lines • Tap to expand output"
                         },
                         color = ForgeCyan,
                         fontFamily = FontFamily.Monospace,
