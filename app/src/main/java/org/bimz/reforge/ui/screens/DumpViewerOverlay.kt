@@ -90,6 +90,7 @@ import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
 import org.bimz.reforge.ui.theme.ForgeAmber
 import org.bimz.reforge.ui.theme.ForgeBg
+import org.bimz.reforge.ui.theme.DarkForgeTokens
 import org.bimz.reforge.ui.theme.ForgeColorTokens
 import org.bimz.reforge.ui.theme.LocalForgeColors
 import org.bimz.reforge.ui.theme.ForgeBorder
@@ -708,7 +709,7 @@ private fun InAppDumpReaderLayer(
                                 ) {
                                     items(slice.entries, key = { it.lineNumber }) { entry ->
                                         val styledLine = remember(entry.text, searchQuery) {
-                                            styleDumpLineOverlay(entry.text, searchQuery)
+                                            styleDumpLineOverlay(entry.text, searchQuery, LocalForgeColors.current)
                                         }
                                         Row(verticalAlignment = Alignment.Top) {
                                             Text(
@@ -849,7 +850,7 @@ private fun InAppDumpReaderLayer(
     }
 }
 
-private fun styleDumpLineOverlay(line: String, query: String, tokens: ForgeColorTokens): AnnotatedString {
+private fun styleDumpLineOverlay(line: String, query: String, tokens: ForgeColorTokens = DarkForgeTokens): AnnotatedString {
     val baseColor = when {
         line.startsWith("[") && line.endsWith("]") -> tokens.cyan
         line.startsWith("//") || line.startsWith("#") || line.startsWith(";") || line.startsWith("=") -> tokens.emerald

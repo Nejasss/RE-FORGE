@@ -87,6 +87,7 @@ import org.bimz.reforge.ui.state.WorkstationUiState
 import org.bimz.reforge.ui.state.WorkstationViewModel
 import org.bimz.reforge.ui.theme.ForgeAmber
 import org.bimz.reforge.ui.theme.ForgeBg
+import org.bimz.reforge.ui.theme.DarkForgeTokens
 import org.bimz.reforge.ui.theme.ForgeColorTokens
 import org.bimz.reforge.ui.theme.LocalForgeColors
 import org.bimz.reforge.ui.theme.ForgeBorder
@@ -714,7 +715,7 @@ fun ToolsScreen(
     }
 }
 
-private fun highlightTerminalOutput(raw: String, isError: Boolean, tokens: ForgeColorTokens): AnnotatedString {
+private fun highlightTerminalOutput(raw: String, isError: Boolean, tokens: ForgeColorTokens = DarkForgeTokens): AnnotatedString {
     if (isError) {
         return buildAnnotatedString {
             withStyle(SpanStyle(color = tokens.rose)) {
@@ -802,7 +803,7 @@ private fun ConsoleEntryBlock(
         }
     }
     val highlighted = remember(visibleText, entry.isError) {
-        highlightTerminalOutput(visibleText, entry.isError)
+        highlightTerminalOutput(visibleText, entry.isError, LocalForgeColors.current)
     }
 
     Surface(
